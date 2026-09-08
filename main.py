@@ -22,10 +22,21 @@ from skyfield.api import load
 #                as SwissCube). Two satellites launched together into
 #                similar orbits, ~17 years ago -- a natural pair for later
 #                comparing how much their orbits have diverged under drag.
+# MICROSCOPE   - CNES microsatellite (~300 kg, Myriade-class), launched from
+#                Kourou on Soyuz VS14 in April 2016. Flew twin accelerometers
+#                to test Einstein's Weak Equivalence Principle to ~1e-15
+#                precision -- the most precise test of it ever flown -- and
+#                ties directly into this project's Kourou/ESA theme.
+#                (NB: EyeSat, NORAD 44877, also launched from Kourou via
+#                CNES and would have been a nice small-CubeSat comparison,
+#                but it decayed 2023-11-19 and Celestrak has no current
+#                elements for it -- confirmed via CATNR lookup before
+#                ruling it out.)
 SATELLITES = {
     "ISS (ZARYA)": 25544,
     "SWISSCUBE": 35932,
     "BEESAT-1": 35933,
+    "MICROSCOPE": 41457,
 }
 
 CELESTRAK_URL = (
