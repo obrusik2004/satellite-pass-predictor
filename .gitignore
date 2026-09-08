@@ -216,3 +216,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Cached TLE data downloaded from Celestrak (fetched, not source -- see main.py)
+data/
