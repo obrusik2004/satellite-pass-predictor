@@ -8,7 +8,7 @@ from Celestrak. This is the data-ingestion step that later stages
 
 import os
 
-from skyfield.api import load
+from skyfield.api import load, wgs84
 
 # Satellites tracked by this tool, identified by NORAD Catalog Number
 # (the stable numeric ID Celestrak, Space-Track etc. all key on -- names
@@ -92,6 +92,36 @@ def load_satellites(satellites=SATELLITES):
     return result
 
 
+def get_subpoint(sat, t):
+    """
+    Compute a satellite's geodetic subpoint (the point directly below it
+    on Earth's surface) at a single Skyfield time `t`.
+
+    This is deliberately a pure "one satellite, one time -> one position"
+    function rather than something that loops over a time range itself.
+    The ground-track step needs to call this once per satellite for every
+    minute of a 24h window, and the pass-prediction step needs to call it
+    at whatever times its search happens to land on -- so the time grid
+    belongs to the caller, not to this function.
+
+    `sat.at(t)` returns the satellite's position as seen from Earth's
+    center (geocentric) in the GCRS inertial frame. `wgs84.subpoint()`
+    rotates that into Earth-fixed coordinates and maps it onto the WGS84
+    ellipsoid, giving latitude/longitude/altitude -- the same ellipsoid
+    model GPS uses, which is why this is directly comparable to what a
+    tracking site or a GPS receiver would report.
+
+    Returns a dict with latitude_deg, longitude_deg, altitude_km.
+    """
+    geocentric = sat.at(t)
+    subpoint = wgs84.subpoint(geocentric)
+    return {
+        "latitude_deg": subpoint.latitude.degrees,
+        "longitude_deg": subpoint.longitude.degrees,
+        "altitude_km": subpoint.elevation.km,
+    }
+
+
 def main():
     satellites = load_satellites()
 
@@ -99,6 +129,17 @@ def main():
     for name, sat in satellites.items():
         print(f"{name}  (NORAD {sat.model.satnum})")
         print(f"  TLE epoch: {sat.epoch.utc_strftime('%Y-%m-%d %H:%M:%S UTC')}")
+        print()
+
+    ts = load.timescale()
+    t = ts.now()
+    print(f"Current positions at {t.utc_strftime('%Y-%m-%d %H:%M:%S UTC')}:\n")
+    for name, sat in satellites.items():
+        pos = get_subpoint(sat, t)
+        print(f"{name}")
+        print(f"  latitude:  {pos['latitude_deg']:+.4f} deg")
+        print(f"  longitude: {pos['longitude_deg']:+.4f} deg")
+        print(f"  altitude:  {pos['altitude_km']:.1f} km")
         print()
 
 
