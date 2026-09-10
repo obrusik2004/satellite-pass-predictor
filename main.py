@@ -71,7 +71,20 @@ def load_satellites(satellites=SATELLITES):
             not load.exists(filename)
             or load.days_old(filename) > MAX_TLE_AGE_DAYS
         )
-        entries = load.tle_file(url, filename=filename, reload=stale)
+        try:
+            entries = load.tle_file(url, filename=filename, reload=stale)
+        except OSError as e:
+            # Celestrak being briefly unreachable/rate-limited shouldn't
+            # crash the whole pipeline if we already have a usable (if a
+            # bit stale) copy on disk -- fall back to it, but say so.
+            if not load.exists(filename):
+                raise
+            age = load.days_old(filename)
+            print(
+                f"Warning: could not refresh TLE for {name} ({e}); "
+                f"using cached copy from {age:.1f} day(s) ago instead."
+            )
+            entries = load.tle_file(filename)
 
         # gp.php with a single CATALOG_NUMBER always returns exactly one
         # satellite, so entries[0] is safe here.
