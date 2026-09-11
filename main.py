@@ -8,6 +8,8 @@ from Celestrak. This is the data-ingestion step that later stages
 
 import os
 
+import matplotlib.pyplot as plt
+import numpy as np
 from skyfield.api import load, wgs84
 
 # Satellites tracked by this tool, identified by NORAD Catalog Number
@@ -51,6 +53,7 @@ CELESTRAK_URL = (
 MAX_TLE_AGE_DAYS = 1.0
 
 TLE_CACHE_DIR = "data"
+OUTPUT_DIR = "output"
 
 
 def load_satellites(satellites=SATELLITES):
@@ -122,6 +125,113 @@ def get_subpoint(sat, t):
     }
 
 
+def compute_ground_track(sat, ts, start_time=None, duration_hours=24,
+                          step_minutes=1):
+    """
+    Propagate one satellite's subpoint over an evenly-spaced time grid.
+
+    Builds a single vectorized Skyfield time spanning `duration_hours`
+    starting at `start_time` (default: now), sampled every `step_minutes`,
+    and calls get_subpoint() once across the whole array. Skyfield/SGP4
+    vectorize cleanly over time arrays, so this is one batched computation
+    (e.g. 1441 samples at once for a 24h/1min grid) rather than 1441
+    separate Python-level calls -- exactly what get_subpoint()'s "one
+    time, caller's choice of grid" design from the propagation step was
+    meant to make easy.
+
+    Returns a dict with 'time' (the Skyfield Time array) plus
+    'latitude_deg', 'longitude_deg', 'altitude_km' (numpy arrays, one
+    entry per sample).
+    """
+    if start_time is None:
+        start_time = ts.now()
+
+    n_steps = int(duration_hours * 60 / step_minutes) + 1
+    minutes = np.arange(n_steps) * step_minutes
+    t = start_time + minutes / 1440.0  # Skyfield Time + fractional days
+
+    track = get_subpoint(sat, t)
+    track["time"] = t
+    return track
+
+
+def _split_at_antimeridian(longitudes, latitudes):
+    """
+    Insert NaN breaks wherever consecutive longitude samples jump across
+    the +180/-180 antimeridian (International Date Line).
+
+    A ground track crossing that line jumps from e.g. +179.9 deg to
+    -179.9 deg between two adjacent samples that are actually right next
+    to each other on the map. Plotted naively, that reads as one sample
+    spanning almost 360 degrees -- a wrong horizontal streak all the way
+    across the plot. matplotlib skips over NaN values in a line plot, so
+    inserting one at each such jump breaks the line into separate
+    segments there instead, without needing to change how the underlying
+    lat/lon data was computed.
+    """
+    longitudes = np.asarray(longitudes, dtype=float)
+    latitudes = np.asarray(latitudes, dtype=float)
+
+    jumps = np.where(np.abs(np.diff(longitudes)) > 180.0)[0]
+    if len(jumps) == 0:
+        return longitudes, latitudes
+
+    insert_at = jumps + 1
+    longitudes = np.insert(longitudes, insert_at, np.nan)
+    latitudes = np.insert(latitudes, insert_at, np.nan)
+    return longitudes, latitudes
+
+
+def plot_ground_tracks(satellites, ts, start_time=None, duration_hours=24,
+                        step_minutes=1, output_path=None):
+    """
+    Plot every satellite's ground track over the next `duration_hours` on
+    a plain lat/lon grid and save it as a PNG.
+
+    Deliberately no coastlines/continent outlines here (see README) --
+    just a 30-degree lat/lon grid, axis labels, and a legend. All
+    satellites share the same start_time so the tracks are directly
+    comparable on one plot.
+    """
+    if start_time is None:
+        start_time = ts.now()
+    if output_path is None:
+        output_path = os.path.join(OUTPUT_DIR, "ground_tracks.png")
+
+    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+
+    for name, sat in satellites.items():
+        track = compute_ground_track(
+            sat, ts, start_time=start_time,
+            duration_hours=duration_hours, step_minutes=step_minutes,
+        )
+        lon, lat = _split_at_antimeridian(
+            track["longitude_deg"], track["latitude_deg"]
+        )
+        ax.plot(lon, lat, linewidth=1, label=name)
+
+    ax.set_xlim(-180, 180)
+    ax.set_ylim(-90, 90)
+    ax.set_xticks(np.arange(-180, 181, 30))
+    ax.set_yticks(np.arange(-90, 91, 30))
+    ax.grid(True, linestyle="--", linewidth=0.5, alpha=0.6)
+    ax.set_xlabel("Longitude (deg)")
+    ax.set_ylabel("Latitude (deg)")
+    ax.set_title(
+        "Ground tracks -- next {}h from {}".format(
+            duration_hours, start_time.utc_strftime("%Y-%m-%d %H:%M UTC")
+        )
+    )
+    ax.legend(loc="upper right", fontsize=8)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
+
+    return output_path
+
+
 def main():
     satellites = load_satellites()
 
@@ -141,6 +251,9 @@ def main():
         print(f"  longitude: {pos['longitude_deg']:+.4f} deg")
         print(f"  altitude:  {pos['altitude_km']:.1f} km")
         print()
+
+    output_path = plot_ground_tracks(satellites, ts, start_time=t)
+    print(f"Ground track plot saved to {output_path}")
 
 
 if __name__ == "__main__":

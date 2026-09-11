@@ -219,3 +219,6 @@ __marimo__/
 
 # Cached TLE data downloaded from Celestrak (fetched, not source -- see main.py)
 data/
+
+# Generated plots (reproducible from main.py -- not source, see step 3 discussion)
+output/
