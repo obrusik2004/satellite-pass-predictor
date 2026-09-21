@@ -58,10 +58,16 @@ def plot_ground_tracks(
     Plot every satellite's ground track over the next `duration_hours` on
     a plain lat/lon grid and save it as a PNG.
 
-    Deliberately no coastlines/continent outlines here (see README) --
-    just a 30-degree lat/lon grid, axis labels, and a legend. All
-    satellites share the same start_time so the tracks are directly
+    Deliberately no coastlines/continent outlines here: cartopy (the
+    usual way to get those in matplotlib) can be a pain to install on
+    Windows, and a plain 30-degree lat/lon grid with axis labels and a
+    legend is a perfectly fine first version. Cartopy remains an option
+    for a later polish pass if it installs cleanly.
+
+    All satellites share the same start_time so the tracks are directly
     comparable on one plot.
+
+    Returns the path the PNG was saved to.
     """
     if start_time is None:
         start_time = ts.now()

@@ -1,9 +1,12 @@
 """
 Satellite Pass Predictor
 =========================
-Loads current TLE (Two-Line Element) data for a small set of satellites
-from Celestrak. This is the data-ingestion step that later stages
-(orbit propagation, ground tracks, visibility windows over Kourou) build on.
+Thin orchestrator for the satellite_pass_predictor package: runs the
+full pipeline end to end -- load TLEs, print each satellite's current
+position, save a 24h ground-track plot, then compute and print
+visibility passes over Kourou. All the actual logic lives in the
+package's modules (config, tle_data, propagation, time_utils,
+visibility, visualization); this file only sequences calls into them.
 """
 
 from skyfield.api import load
@@ -24,6 +27,13 @@ from satellite_pass_predictor.visualization import (
 
 
 def main() -> None:
+    """
+    Run the full pipeline for the configured satellites, in order: load
+    TLEs, print each satellite's current position, save a 24h ground-
+    track plot, then compute and print Kourou visibility passes.
+    Deliberately holds no logic of its own -- see the package modules
+    (imported above) for that.
+    """
     satellites = load_satellites()
 
     print(f"Loaded {len(satellites)} satellite(s):\n")

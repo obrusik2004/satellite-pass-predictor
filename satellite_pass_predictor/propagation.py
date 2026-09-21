@@ -23,9 +23,19 @@ from .time_utils import build_time_grid
 # visible at the type level instead of hiding it.
 FloatOrArray = float | NDArray[np.float64]
 
+# TypedDict, not a dataclass, for these result types (here and in
+# visibility.py's AltAzDict/PassDict): the whole codebase already passes
+# these around as plain dicts accessed by string key (pos['latitude_deg'],
+# p["start_time"], etc.) in main.py, visibility.py and visualization.py.
+# A dataclass would mean attribute access (pos.latitude_deg) instead,
+# which means changing every one of those call sites -- real code churn,
+# not just typing. TypedDict adds precise, checked types for a fixed,
+# known set of keys with zero runtime change (it erases to a plain dict
+# at runtime) and zero call-site changes.
+
 
 class SubpointDict(TypedDict):
-    """Geodetic subpoint: get_subpoint()'s fixed, known set of keys."""
+    """Geodetic subpoint: get_subpoint()'s fixed, known keys."""
     latitude_deg: FloatOrArray
     longitude_deg: FloatOrArray
     altitude_km: FloatOrArray

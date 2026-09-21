@@ -20,6 +20,11 @@ from .time_utils import build_time_grid
 # and a vectorized time grid (an array result).
 FloatOrArray = float | NDArray[np.float64]
 
+# TypedDict rather than a dataclass here too -- same reasoning as
+# propagation.py's SubpointDict/GroundTrackDict (see there): these are
+# accessed by string key everywhere they're used, and TypedDict gets
+# precise types with no call-site changes and no runtime change.
+
 
 class AltAzDict(TypedDict):
     """Topocentric look angles: compute_altaz()'s fixed, known keys."""
@@ -179,6 +184,8 @@ def compute_passes(
     """
     Convenience wrapper: build the time grid, compute alt/az across it,
     and run find_passes() over the result for a single satellite.
+
+    Returns the same list[PassDict] find_passes() returns.
     """
     t = build_time_grid(ts, start_time, duration_hours, step_minutes)
     altaz = compute_altaz(sat, observer, t)
