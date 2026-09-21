@@ -5,9 +5,15 @@ happen to need "many evenly-spaced instants over the next N hours".
 """
 
 import numpy as np
+from skyfield.timelib import Time, Timescale
 
 
-def build_time_grid(ts, start_time=None, duration_hours=24, step_minutes=1):
+def build_time_grid(
+    ts: Timescale,
+    start_time: Time | None = None,
+    duration_hours: float = 24,
+    step_minutes: float = 1,
+) -> Time:
     """
     Build a single vectorized Skyfield time spanning `duration_hours`
     starting at `start_time` (default: now), sampled every `step_minutes`.

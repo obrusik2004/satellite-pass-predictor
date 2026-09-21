@@ -4,13 +4,48 @@ detecting visibility passes (contiguous stretches above an elevation
 threshold) from that.
 """
 
+from typing import TypedDict, cast
+
 import numpy as np
+from numpy.typing import NDArray
+from skyfield.sgp4lib import EarthSatellite
+from skyfield.timelib import Time, Timescale
+from skyfield.toposlib import GeographicPosition
 
 from .config import MIN_PASS_ELEVATION_DEG, MIN_PASS_SAMPLES_FOR_CONFIDENCE
 from .time_utils import build_time_grid
 
+# See propagation.py's FloatOrArray for why this isn't just `float`:
+# compute_altaz() is called both with a single time (a scalar result)
+# and a vectorized time grid (an array result).
+FloatOrArray = float | NDArray[np.float64]
 
-def compute_altaz(sat, observer, t):
+
+class AltAzDict(TypedDict):
+    """Topocentric look angles: compute_altaz()'s fixed, known keys."""
+    elevation_deg: FloatOrArray
+    azimuth_deg: FloatOrArray
+    distance_km: FloatOrArray
+
+
+class PassDict(TypedDict):
+    """One detected visibility pass: find_passes()'s fixed, known keys."""
+    start_time: Time
+    start_azimuth_deg: float
+    start_truncated: bool
+    end_time: Time
+    end_azimuth_deg: float
+    end_truncated: bool
+    max_elevation_deg: float
+    max_elevation_time: Time
+    max_elevation_truncated: bool
+    duration_minutes: float
+    low_confidence: bool
+
+
+def compute_altaz(
+    sat: EarthSatellite, observer: GeographicPosition, t: Time
+) -> AltAzDict:
     """
     Compute a satellite's elevation, azimuth, and range as seen from
     `observer` at time(s) `t`.
@@ -36,8 +71,12 @@ def compute_altaz(sat, observer, t):
     }
 
 
-def find_passes(t, elevation_deg, azimuth_deg,
-                 min_elevation_deg=MIN_PASS_ELEVATION_DEG):
+def find_passes(
+    t: Time,
+    elevation_deg: NDArray[np.float64],
+    azimuth_deg: NDArray[np.float64],
+    min_elevation_deg: float = MIN_PASS_ELEVATION_DEG,
+) -> list[PassDict]:
     """
     Detect visibility passes: contiguous stretches of the sampled time
     grid where elevation stays at or above `min_elevation_deg`.
@@ -81,7 +120,7 @@ def find_passes(t, elevation_deg, azimuth_deg,
     above = elevation_deg >= min_elevation_deg
     n = len(elevation_deg)
 
-    passes = []
+    passes: list[PassDict] = []
     i = 0
     while i < n:
         if not above[i]:
@@ -128,15 +167,29 @@ def find_passes(t, elevation_deg, azimuth_deg,
     return passes
 
 
-def compute_passes(sat, observer, ts, start_time=None, duration_hours=24,
-                    step_minutes=1, min_elevation_deg=MIN_PASS_ELEVATION_DEG):
+def compute_passes(
+    sat: EarthSatellite,
+    observer: GeographicPosition,
+    ts: Timescale,
+    start_time: Time | None = None,
+    duration_hours: float = 24,
+    step_minutes: float = 1,
+    min_elevation_deg: float = MIN_PASS_ELEVATION_DEG,
+) -> list[PassDict]:
     """
     Convenience wrapper: build the time grid, compute alt/az across it,
     and run find_passes() over the result for a single satellite.
     """
     t = build_time_grid(ts, start_time, duration_hours, step_minutes)
     altaz = compute_altaz(sat, observer, t)
+    # compute_altaz()'s fields are typed float | NDArray because a scalar
+    # `t` would produce scalars -- but `t` here always comes from
+    # build_time_grid(), which always returns a vectorized time, so these
+    # are always arrays in practice. cast() tells mypy that without
+    # changing anything at runtime (it's a no-op).
+    elevation_deg = cast(NDArray[np.float64], altaz["elevation_deg"])
+    azimuth_deg = cast(NDArray[np.float64], altaz["azimuth_deg"])
     return find_passes(
-        t, altaz["elevation_deg"], altaz["azimuth_deg"],
+        t, elevation_deg, azimuth_deg,
         min_elevation_deg=min_elevation_deg,
     )

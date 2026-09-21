@@ -23,7 +23,7 @@ from satellite_pass_predictor.visualization import (
 )
 
 
-def main():
+def main() -> None:
     satellites = load_satellites()
 
     print(f"Loaded {len(satellites)} satellite(s):\n")

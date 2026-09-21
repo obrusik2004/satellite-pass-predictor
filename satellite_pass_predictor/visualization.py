@@ -4,15 +4,22 @@ output -- the ground track plot (PNG) and the pass table (printed text).
 """
 
 import os
+from typing import cast
 
 import matplotlib.pyplot as plt
 import numpy as np
+from numpy.typing import NDArray
+from skyfield.sgp4lib import EarthSatellite
+from skyfield.timelib import Time, Timescale
 
 from .config import OUTPUT_DIR
 from .propagation import compute_ground_track
+from .visibility import PassDict
 
 
-def _split_at_antimeridian(longitudes, latitudes):
+def _split_at_antimeridian(
+    longitudes: NDArray[np.float64], latitudes: NDArray[np.float64]
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     """
     Insert NaN breaks wherever consecutive longitude samples jump across
     the +180/-180 antimeridian (International Date Line).
@@ -39,8 +46,14 @@ def _split_at_antimeridian(longitudes, latitudes):
     return longitudes, latitudes
 
 
-def plot_ground_tracks(satellites, ts, start_time=None, duration_hours=24,
-                        step_minutes=1, output_path=None):
+def plot_ground_tracks(
+    satellites: dict[str, EarthSatellite],
+    ts: Timescale,
+    start_time: Time | None = None,
+    duration_hours: float = 24,
+    step_minutes: float = 1,
+    output_path: str | None = None,
+) -> str:
     """
     Plot every satellite's ground track over the next `duration_hours` on
     a plain lat/lon grid and save it as a PNG.
@@ -64,9 +77,13 @@ def plot_ground_tracks(satellites, ts, start_time=None, duration_hours=24,
             sat, ts, start_time=start_time,
             duration_hours=duration_hours, step_minutes=step_minutes,
         )
-        lon, lat = _split_at_antimeridian(
-            track["longitude_deg"], track["latitude_deg"]
-        )
+        # track's lat/lon fields are typed float | NDArray (see
+        # propagation.FloatOrArray), but compute_ground_track() is always
+        # given a vectorized `start_time`/grid here, so these are always
+        # arrays in practice -- cast() tells mypy that, as a no-op.
+        longitude_deg = cast(NDArray[np.float64], track["longitude_deg"])
+        latitude_deg = cast(NDArray[np.float64], track["latitude_deg"])
+        lon, lat = _split_at_antimeridian(longitude_deg, latitude_deg)
         ax.plot(lon, lat, linewidth=1, label=name)
 
     ax.set_xlim(-180, 180)
@@ -89,15 +106,18 @@ def plot_ground_tracks(satellites, ts, start_time=None, duration_hours=24,
     return output_path
 
 
-def print_passes_table(passes_by_satellite):
+def print_passes_table(passes_by_satellite: dict[str, list[PassDict]]) -> None:
     """
     Print one row per detected pass across all satellites, sorted by
     start time, as a plain fixed-width text table.
     """
-    rows = []
+    # Local to this function only (never returned or passed elsewhere),
+    # so a plain annotated dict is enough here -- no need for a PassDict-
+    # style TypedDict just for this display-formatting intermediate.
+    rows: list[dict[str, str | Time]] = []
     for name, passes in passes_by_satellite.items():
         for p in passes:
-            notes = []
+            notes: list[str] = []
             if p["start_truncated"]:
                 notes.append("IN PROGRESS AT START")
             if p["end_truncated"]:

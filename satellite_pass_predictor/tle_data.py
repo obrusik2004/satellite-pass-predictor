@@ -6,11 +6,14 @@ for the tracked satellites from Celestrak.
 import os
 
 from skyfield.api import load
+from skyfield.sgp4lib import EarthSatellite
 
 from .config import CELESTRAK_URL, MAX_TLE_AGE_DAYS, SATELLITES, TLE_CACHE_DIR
 
 
-def load_satellites(satellites=SATELLITES):
+def load_satellites(
+    satellites: dict[str, int] = SATELLITES,
+) -> dict[str, EarthSatellite]:
     """
     Fetch current TLE data for each satellite, from a local cache when it's
     fresh enough or from Celestrak otherwise.
@@ -19,7 +22,7 @@ def load_satellites(satellites=SATELLITES):
     """
     os.makedirs(TLE_CACHE_DIR, exist_ok=True)
 
-    result = {}
+    result: dict[str, EarthSatellite] = {}
     for name, norad_id in satellites.items():
         url = CELESTRAK_URL.format(norad_id=norad_id)
         filename = os.path.join(TLE_CACHE_DIR, f"tle_{norad_id}.txt")

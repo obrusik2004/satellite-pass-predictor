@@ -6,6 +6,7 @@ import and use.
 """
 
 from skyfield.api import wgs84
+from skyfield.toposlib import GeographicPosition
 
 # Satellites tracked by this tool, identified by NORAD Catalog Number
 # (the stable numeric ID Celestrak, Space-Track etc. all key on -- names
@@ -29,14 +30,14 @@ from skyfield.api import wgs84
 #                but it decayed 2023-11-19 and Celestrak has no current
 #                elements for it -- confirmed via CATNR lookup before
 #                ruling it out.)
-SATELLITES = {
+SATELLITES: dict[str, int] = {
     "ISS (ZARYA)": 25544,
     "SWISSCUBE": 35932,
     "BEESAT-1": 35933,
     "MICROSCOPE": 41457,
 }
 
-CELESTRAK_URL = (
+CELESTRAK_URL: str = (
     "https://celestrak.org/NORAD/elements/gp.php"
     "?CATNR={norad_id}&FORMAT=TLE"
 )
@@ -45,10 +46,10 @@ CELESTRAK_URL = (
 # TLEs are only accurate for a matter of days (drag perturbations aren't
 # modeled by SGP4), so we don't want to cache forever -- but we also
 # don't want to hit Celestrak's servers on every single run.
-MAX_TLE_AGE_DAYS = 1.0
+MAX_TLE_AGE_DAYS: float = 1.0
 
-TLE_CACHE_DIR = "data"
-OUTPUT_DIR = "output"
+TLE_CACHE_DIR: str = "data"
+OUTPUT_DIR: str = "output"
 
 # Guiana Space Centre (Centre Spatial Guyanais), Kourou, French Guiana --
 # the ESA/CNES/Arianespace launch site this whole project is themed
@@ -66,11 +67,11 @@ OUTPUT_DIR = "output"
 # threshold. So one specific, citable reference point is used for
 # reproducibility, not because sub-km precision matters for this
 # calculation.
-KOUROU_LATITUDE_DEG = 5.169
-KOUROU_LONGITUDE_DEG = -52.6903
-KOUROU_ELEVATION_M = 0  # coastal, effectively sea level; irrelevant here
+KOUROU_LATITUDE_DEG: float = 5.169
+KOUROU_LONGITUDE_DEG: float = -52.6903
+KOUROU_ELEVATION_M: float = 0  # coastal, effectively sea level; irrelevant here
 
-KOUROU = wgs84.latlon(
+KOUROU: GeographicPosition = wgs84.latlon(
     KOUROU_LATITUDE_DEG, KOUROU_LONGITUDE_DEG, elevation_m=KOUROU_ELEVATION_M
 )
 
@@ -79,9 +80,9 @@ KOUROU = wgs84.latlon(
 # usually unusable anyway (obstructions, atmospheric extinction), and
 # 10 degrees is the conventional default for both amateur satellite
 # tracking and this kind of pass table.
-MIN_PASS_ELEVATION_DEG = 10.0
+MIN_PASS_ELEVATION_DEG: float = 10.0
 
 # A detected pass spanning fewer samples than this has its start/end/peak
 # resolved only to within one sampling step, since we don't know what
 # happened *between* samples -- see find_passes() for how this is used.
-MIN_PASS_SAMPLES_FOR_CONFIDENCE = 3
+MIN_PASS_SAMPLES_FOR_CONFIDENCE: int = 3
