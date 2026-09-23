@@ -147,7 +147,22 @@ def find_passes(
 
         # If we were cut off at the end of the window while elevation was
         # still climbing, the true maximum hasn't been observed yet.
-        max_elevation_truncated = (
+        #
+        # Wrapped in bool(...) because the last operand of this chain
+        # (elev_segment[-1] > elev_segment[-2]) compares two numpy
+        # float64 scalars, which produces a numpy.bool_ -- and Python's
+        # `and` short-circuits by returning whichever operand it last
+        # evaluated as-is, so without the wrap the whole expression would
+        # be numpy.bool_ instead of the `bool` PassDict declares. Unlike
+        # np.float64 (a genuine subclass of float, so JSON-serializable
+        # as-is), np.bool_ cannot subclass Python's bool -- CPython
+        # doesn't allow subclassing bool at all -- so it's a distinct
+        # type that both fails `is True`/`is False` identity checks and
+        # isn't accepted by json.dumps(). Harmless everywhere this value
+        # is currently only used in truthiness checks (print_passes_table),
+        # but worth fixing at the source before pass data needs to be
+        # serialized (e.g. a future JSON API/Streamlit app).
+        max_elevation_truncated = bool(
             end_truncated
             and max_local_idx == end_idx
             and n_samples > 1

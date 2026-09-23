@@ -1,15 +1,31 @@
 """
 Tests for satellite_pass_predictor.visualization.
 
-PURE LOGIC: _split_at_antimeridian() is plain numpy array manipulation --
-no TLE, no EarthSatellite, no Skyfield object of any kind. Tested here in
-isolation from plot_ground_tracks() (which would require rendering a
-real matplotlib figure to exercise it).
+Split by what each group needs:
+
+- test_*_crossing_*/test_exactly_180_* : PURE LOGIC. _split_at_antimeridian()
+  is plain numpy array manipulation -- no TLE, no EarthSatellite, no
+  Skyfield object of any kind.
+- test_print_passes_table_* : PURE LOGIC. Constructs its own
+  passes_by_satellite dicts directly, no TLE/EarthSatellite needed.
+- test_plot_ground_tracks_* : FIXTURE-BASED. Uses the real `iss_satellite`
+  fixture (frozen TLE, no live fetch -- see conftest.py) and actually
+  renders a matplotlib figure via a non-interactive backend, since that's
+  what's needed to exercise plot_ground_tracks() itself (as opposed to
+  just its antimeridian-handling logic, tested separately above).
 """
 
-import numpy as np
+from pathlib import Path
 
-from satellite_pass_predictor.visualization import _split_at_antimeridian
+import numpy as np
+import pytest
+from skyfield.timelib import Timescale
+
+from satellite_pass_predictor.visualization import (
+    _split_at_antimeridian,
+    plot_ground_tracks,
+    print_passes_table,
+)
 
 
 def test_no_crossing_leaves_arrays_unchanged() -> None:
@@ -83,3 +99,42 @@ def test_exactly_180_degree_jump_is_not_treated_as_a_crossing() -> None:
 
     assert np.array_equal(out_lon, longitudes)
     assert not np.any(np.isnan(out_lon))
+
+
+def test_print_passes_table_with_no_passes_prints_a_clean_message(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """
+    Confirms already-correct behavior (not a fix -- verified during the
+    robustness audit): a 24h window with zero detected passes for every
+    satellite is a real, unremarkable possibility (unlucky timing/
+    geometry), not an error. The empty-dict-of-empty-lists case should
+    print a clear one-line message, not crash or print an empty/
+    confusing table.
+    """
+    print_passes_table({"ISS (ZARYA)": [], "MICROSCOPE": []})
+
+    output = capsys.readouterr().out
+    assert "No passes" in output
+
+
+def test_plot_ground_tracks_creates_output_directory_if_missing(
+    tmp_path: Path, ts: Timescale, iss_satellite
+) -> None:
+    """
+    Confirms already-correct behavior (not a fix -- verified during the
+    robustness audit): a completely fresh clone has no output/ directory
+    yet. plot_ground_tracks() should create whatever directory its
+    output_path lives in rather than assuming it already exists.
+    """
+    output_path = tmp_path / "does" / "not" / "exist" / "yet" / "tracks.png"
+    assert not output_path.parent.exists()
+
+    t0 = ts.utc(2026, 9, 21, 0, 0, 0)
+    result = plot_ground_tracks(
+        {"ISS (ZARYA)": iss_satellite}, ts, start_time=t0,
+        duration_hours=1, step_minutes=30, output_path=str(output_path),
+    )
+
+    assert result == str(output_path)
+    assert output_path.exists()

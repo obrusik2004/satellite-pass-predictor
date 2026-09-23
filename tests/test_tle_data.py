@@ -11,10 +11,13 @@ not ours.
 
 What *is* worth testing is the logic this module adds on top of
 Skyfield: the staleness decision (does it ask for reload=True at the
-right times?) and the OSError fallback-to-cache behavior (does a failed
-fetch degrade to the cached copy when one exists, and re-raise when it
-doesn't?). Both are exercised here with Skyfield's Loader methods
-mocked out -- no network, no real TLE files, no timing dependence.
+right times?), the OSError fallback-to-cache behavior (does a failed
+fetch degrade to the cached copy when one exists, and re-raise with an
+actionable message when it doesn't?), and the empty-response check (does
+a response with no usable TLE in it -- e.g. an unrecognized/decayed
+NORAD ID -- raise a clear ValueError instead of a bare IndexError?).
+All exercised here with Skyfield's Loader methods mocked out -- no
+network, no real TLE files, no timing dependence.
 """
 
 from unittest.mock import MagicMock
@@ -104,16 +107,50 @@ def test_falls_back_to_cache_when_fetch_fails_but_cache_exists(
     assert "3.0 day" in warning
 
 
-def test_reraises_when_fetch_fails_and_no_cache_exists(monkeypatch: pytest.MonkeyPatch) -> None:
-    """No cached fallback available -> the OSError should propagate
-    rather than being swallowed, since there's nothing usable to fall
-    back to."""
+def test_reraises_with_actionable_message_when_fetch_fails_and_no_cache_exists(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    No cached fallback available (e.g. the very first run ever, with no
+    internet) -- the failure should propagate as an OSError, but wrapped
+    with a message naming the satellite/NORAD ID and pointing at the
+    likely cause, not just Skyfield's low-level "cannot download ..."
+    text passed straight through.
+    """
     monkeypatch.setattr(tle_data.load, "exists", lambda filename: False)
 
     def _tle_file(*args, **kwargs):
-        raise OSError("503 Service Unavailable")
+        raise OSError("<urlopen error [Errno 11001] getaddrinfo failed>")
 
     monkeypatch.setattr(tle_data.load, "tle_file", _tle_file)
 
-    with pytest.raises(OSError):
+    with pytest.raises(OSError) as exc_info:
         tle_data.load_satellites(FAKE_SATELLITES)
+
+    message = str(exc_info.value)
+    assert "TESTSAT" in message
+    assert "99999" in message
+    assert "internet connection" in message
+
+
+def test_raises_value_error_when_response_has_no_usable_tle_data(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Celestrak (or a cached file) can return a 200 OK with an empty or
+    "No GP data found" body for an unrecognized/decayed NORAD ID --
+    Skyfield's TLE parser doesn't raise on that, it just returns an
+    empty list. Without a check for this, entries[0] would raise a bare
+    IndexError with no indication of the real cause -- this should
+    instead be a clear ValueError naming the satellite and NORAD ID.
+    """
+    monkeypatch.setattr(tle_data.load, "exists", lambda filename: True)
+    monkeypatch.setattr(tle_data.load, "days_old", lambda filename: 0.1)
+    monkeypatch.setattr(tle_data.load, "tle_file", lambda *a, **k: [])
+
+    with pytest.raises(ValueError) as exc_info:
+        tle_data.load_satellites(FAKE_SATELLITES)
+
+    message = str(exc_info.value)
+    assert "TESTSAT" in message
+    assert "99999" in message

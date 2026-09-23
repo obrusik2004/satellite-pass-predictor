@@ -131,6 +131,37 @@ def test_find_passes_pass_still_above_threshold_at_window_end(ts: Timescale) -> 
     assert not p["low_confidence"]  # 5 samples >= 3
 
 
+def test_find_passes_boolean_fields_are_genuine_python_bool_not_numpy_bool(
+    ts: Timescale,
+) -> None:
+    """
+    Regression test: max_elevation_truncated is computed via a chain of
+    `and`s ending in a numpy array comparison (elev_segment[-1] >
+    elev_segment[-2]), which -- without an explicit bool(...) wrap --
+    produces a numpy.bool_ at runtime rather than the Python bool
+    PassDict declares. numpy.bool_ is truthy-compatible (so it silently
+    "worked" everywhere the codebase only ever checked truthiness), but
+    it fails `is True`/`is False` identity checks and isn't accepted by
+    json.dumps() (unlike numpy.float64, which genuinely subclasses
+    float and *is* JSON-safe -- this is specifically a bool problem,
+    since CPython doesn't allow subclassing bool at all).
+
+    Uses the same "still rising at cutoff" scenario as
+    test_find_passes_pass_still_above_threshold_at_window_end() above,
+    since that's the only shape of input that actually reaches the
+    numpy-comparison operand -- a check on any other scenario wouldn't
+    have caught this.
+    """
+    elevation = np.array([2.0, 5.0, 8.0, 11.0, 16.0, 20.0, 25.0, 30.0], dtype=float)
+    azimuth = np.array([0, 45, 90, 135, 180, 225, 270, 315], dtype=float)
+    t = _synthetic_time_grid(ts, len(elevation))
+
+    p = find_passes(t, elevation, azimuth, min_elevation_deg=10.0)[0]
+
+    for field in ("start_truncated", "end_truncated", "max_elevation_truncated", "low_confidence"):
+        assert type(p[field]) is bool, f"{field} is {type(p[field])!r}, not bool"
+
+
 def test_find_passes_short_marginal_crossing_flagged_low_confidence(ts: Timescale) -> None:
     """
     Edge case: only a single sample grazes above threshold. This is not
