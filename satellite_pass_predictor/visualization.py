@@ -8,6 +8,7 @@ from typing import cast
 
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.figure import Figure
 from numpy.typing import NDArray
 from skyfield.sgp4lib import EarthSatellite
 from skyfield.timelib import Time, Timescale
@@ -46,17 +47,23 @@ def _split_at_antimeridian(
     return longitudes, latitudes
 
 
-def plot_ground_tracks(
+def build_ground_tracks_figure(
     satellites: dict[str, EarthSatellite],
     ts: Timescale,
     start_time: Time | None = None,
     duration_hours: float = 24,
     step_minutes: float = 1,
-    output_path: str | None = None,
-) -> str:
+) -> Figure:
     """
-    Plot every satellite's ground track over the next `duration_hours` on
-    a plain lat/lon grid and save it as a PNG.
+    Build (but don't save or close) a matplotlib Figure plotting every
+    satellite's ground track over the next `duration_hours` on a plain
+    lat/lon grid.
+
+    Split out of plot_ground_tracks() so a caller that needs the live
+    Figure object rather than a saved file -- e.g. the Streamlit app,
+    via st.pyplot(fig) -- can get one without duplicating this drawing
+    code. plot_ground_tracks() itself is now a thin wrapper: build the
+    figure, save it, close it.
 
     Deliberately no coastlines/continent outlines here: cartopy (the
     usual way to get those in matplotlib) can be a pain to install on
@@ -66,15 +73,9 @@ def plot_ground_tracks(
 
     All satellites share the same start_time so the tracks are directly
     comparable on one plot.
-
-    Returns the path the PNG was saved to.
     """
     if start_time is None:
         start_time = ts.now()
-    if output_path is None:
-        output_path = os.path.join(OUTPUT_DIR, "ground_tracks.png")
-
-    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
 
     fig, ax = plt.subplots(figsize=(12, 6))
 
@@ -106,6 +107,32 @@ def plot_ground_tracks(
     )
     ax.legend(loc="upper right", fontsize=8)
     fig.tight_layout()
+
+    return fig
+
+
+def plot_ground_tracks(
+    satellites: dict[str, EarthSatellite],
+    ts: Timescale,
+    start_time: Time | None = None,
+    duration_hours: float = 24,
+    step_minutes: float = 1,
+    output_path: str | None = None,
+) -> str:
+    """
+    Build every satellite's ground-track plot (see
+    build_ground_tracks_figure()) and save it as a PNG.
+
+    Returns the path the PNG was saved to.
+    """
+    if output_path is None:
+        output_path = os.path.join(OUTPUT_DIR, "ground_tracks.png")
+    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+
+    fig = build_ground_tracks_figure(
+        satellites, ts, start_time=start_time,
+        duration_hours=duration_hours, step_minutes=step_minutes,
+    )
     fig.savefig(output_path, dpi=150)
     plt.close(fig)
 

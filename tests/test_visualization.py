@@ -8,21 +8,24 @@ Split by what each group needs:
   Skyfield object of any kind.
 - test_print_passes_table_* : PURE LOGIC. Constructs its own
   passes_by_satellite dicts directly, no TLE/EarthSatellite needed.
-- test_plot_ground_tracks_* : FIXTURE-BASED. Uses the real `iss_satellite`
-  fixture (frozen TLE, no live fetch -- see conftest.py) and actually
-  renders a matplotlib figure via a non-interactive backend, since that's
-  what's needed to exercise plot_ground_tracks() itself (as opposed to
-  just its antimeridian-handling logic, tested separately above).
+- test_plot_ground_tracks_*/test_build_ground_tracks_figure_* :
+  FIXTURE-BASED. Use the real `iss_satellite` fixture (frozen TLE, no
+  live fetch -- see conftest.py) and actually render a matplotlib figure
+  via a non-interactive backend, since that's what's needed to exercise
+  these functions themselves (as opposed to just the antimeridian-
+  handling logic they both call, tested separately above).
 """
 
 from pathlib import Path
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 from skyfield.timelib import Timescale
 
 from satellite_pass_predictor.visualization import (
     _split_at_antimeridian,
+    build_ground_tracks_figure,
     plot_ground_tracks,
     print_passes_table,
 )
@@ -138,3 +141,27 @@ def test_plot_ground_tracks_creates_output_directory_if_missing(
 
     assert result == str(output_path)
     assert output_path.exists()
+
+
+def test_build_ground_tracks_figure_returns_a_live_unclosed_figure(
+    ts: Timescale, iss_satellite
+) -> None:
+    """
+    build_ground_tracks_figure() exists specifically so a caller (the
+    Streamlit app, via st.pyplot()) can get a usable Figure object --
+    unlike plot_ground_tracks(), which saves and closes it. Checks that
+    the returned figure is actually still open (matplotlib drops closed
+    figures from pyplot's tracked figures) and has one line per
+    satellite plotted.
+    """
+    t0 = ts.utc(2026, 9, 21, 0, 0, 0)
+    satellites = {"ISS (ZARYA)": iss_satellite}
+
+    fig = build_ground_tracks_figure(
+        satellites, ts, start_time=t0, duration_hours=1, step_minutes=30,
+    )
+
+    assert plt.fignum_exists(fig.number)
+    assert len(fig.axes) == 1
+    assert len(fig.axes[0].lines) == len(satellites)
+    plt.close(fig)  # clean up -- this test intentionally doesn't call plot_ground_tracks()
