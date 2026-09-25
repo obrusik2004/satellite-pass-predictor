@@ -112,14 +112,41 @@ def plot_ground_tracks(
     return output_path
 
 
-def print_passes_table(passes_by_satellite: dict[str, list[PassDict]]) -> None:
+# Shared between print_passes_table() (below) and reporting.py's HTML
+# table: (row key, display title, text-column width). The width is only
+# meaningful for the fixed-width text rendering here -- an HTML table
+# lays its own columns out and simply ignores it -- but keeping one
+# authoritative (key, title) list is what actually guarantees the two
+# renderings show identical columns in identical order, rather than two
+# independently-maintained lists that could quietly drift apart.
+PASS_TABLE_COLUMNS: list[tuple[str, str, int]] = [
+    ("satellite", "Satellite", 12),
+    ("start", "Start (UTC)", 19),
+    ("start_az", "Start Az", 8),
+    ("max_elev", "Max El", 6),
+    ("max_elev_time", "Max El Time", 11),
+    ("end", "End (UTC)", 19),
+    ("end_az", "End Az", 7),
+    ("duration_min", "Dur (min)", 9),
+    ("notes", "Notes", 40),
+]
+
+
+def build_pass_rows(
+    passes_by_satellite: dict[str, list[PassDict]],
+) -> list[dict[str, str | Time]]:
     """
-    Print one row per detected pass across all satellites, sorted by
-    start time, as a plain fixed-width text table.
+    Flatten passes_by_satellite into one row per pass, with every field
+    pre-formatted to a display string (matching PASS_TABLE_COLUMNS) and
+    sorted by start time -- the shared data prep behind both
+    print_passes_table()'s text table and reporting.py's HTML table, so
+    the two can't drift out of sync with each other.
+
+    Local dict keys, not a PassDict-style TypedDict: this is a display-
+    formatting intermediate (every value coerced to `str`, plus a
+    "_sort_key" that isn't part of either rendering), not one of the
+    fixed data contracts passed between the package's logic modules.
     """
-    # Local to this function only (never returned or passed elsewhere),
-    # so a plain annotated dict is enough here -- no need for a PassDict-
-    # style TypedDict just for this display-formatting intermediate.
     rows: list[dict[str, str | Time]] = []
     for name, passes in passes_by_satellite.items():
         for p in passes:
@@ -146,26 +173,23 @@ def print_passes_table(passes_by_satellite: dict[str, list[PassDict]]) -> None:
                 "_sort_key": p["start_time"],
             })
 
+    rows.sort(key=lambda r: r["_sort_key"])
+    return rows
+
+
+def print_passes_table(passes_by_satellite: dict[str, list[PassDict]]) -> None:
+    """
+    Print one row per detected pass across all satellites, sorted by
+    start time, as a plain fixed-width text table.
+    """
+    rows = build_pass_rows(passes_by_satellite)
+
     if not rows:
         print("No passes above threshold in this window.")
         return
 
-    rows.sort(key=lambda r: r["_sort_key"])
-
-    columns = [
-        ("satellite", "Satellite", 12),
-        ("start", "Start (UTC)", 19),
-        ("start_az", "Start Az", 8),
-        ("max_elev", "Max El", 6),
-        ("max_elev_time", "Max El Time", 11),
-        ("end", "End (UTC)", 19),
-        ("end_az", "End Az", 7),
-        ("duration_min", "Dur (min)", 9),
-        ("notes", "Notes", 40),
-    ]
-
-    header = "  ".join(f"{title:<{width}}" for _, title, width in columns)
+    header = "  ".join(f"{title:<{width}}" for _, title, width in PASS_TABLE_COLUMNS)
     print(header)
     print("-" * len(header))
     for row in rows:
-        print("  ".join(f"{row[key]:<{width}}" for key, _, width in columns))
+        print("  ".join(f"{row[key]:<{width}}" for key, _, width in PASS_TABLE_COLUMNS))

@@ -3,10 +3,11 @@ Satellite Pass Predictor
 =========================
 Thin orchestrator for the satellite_pass_predictor package: runs the
 full pipeline end to end -- load TLEs, print each satellite's current
-position, save a 24h ground-track plot, then compute and print
-visibility passes over Kourou. All the actual logic lives in the
-package's modules (config, tle_data, propagation, time_utils,
-visibility, visualization); this file only sequences calls into them.
+position, save a 24h ground-track plot, compute and print visibility
+passes over Kourou, then combine the plot and pass table into a single
+self-contained HTML report. All the actual logic lives in the package's
+modules (config, tle_data, propagation, time_utils, visibility,
+visualization, reporting); this file only sequences calls into them.
 """
 
 from skyfield.api import load
@@ -18,6 +19,7 @@ from satellite_pass_predictor.config import (
     MIN_PASS_ELEVATION_DEG,
 )
 from satellite_pass_predictor.propagation import get_subpoint
+from satellite_pass_predictor.reporting import generate_html_report
 from satellite_pass_predictor.tle_data import load_satellites
 from satellite_pass_predictor.visibility import compute_passes
 from satellite_pass_predictor.visualization import (
@@ -30,9 +32,10 @@ def main() -> None:
     """
     Run the full pipeline for the configured satellites, in order: load
     TLEs, print each satellite's current position, save a 24h ground-
-    track plot, then compute and print Kourou visibility passes.
-    Deliberately holds no logic of its own -- see the package modules
-    (imported above) for that.
+    track plot, compute and print Kourou visibility passes, then combine
+    the plot and pass table into one HTML report. Deliberately holds no
+    logic of its own -- see the package modules (imported above) for
+    that.
     """
     satellites = load_satellites()
 
@@ -66,6 +69,9 @@ def main() -> None:
         for name, sat in satellites.items()
     }
     print_passes_table(passes_by_satellite)
+
+    report_path = generate_html_report(output_path, passes_by_satellite, generated_at=t)
+    print(f"\nCombined HTML report saved to {report_path}")
 
 
 if __name__ == "__main__":
