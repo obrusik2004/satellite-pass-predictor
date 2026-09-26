@@ -6,6 +6,24 @@ output -- the ground track plot (PNG) and the pass table (printed text).
 import os
 from typing import cast
 
+# Must run before `import matplotlib.pyplot` (or anything that imports it
+# transitively) actually resolves a backend -- matplotlib picks one
+# automatically on first pyplot import, and that auto-detection can fail
+# outright, not just misbehave, on a truly headless target like Streamlit
+# Community Cloud's Linux container (no display server, no GUI toolkit at
+# all). This isn't hypothetical: this project already hit a real
+# backend problem locally (a broken Tcl/Tk install picked by
+# auto-detection on this dev machine -- see conftest.py's own Agg
+# override for the test suite), which is exactly the class of failure
+# that must not be left to chance for the actual deployed app/CLI, where
+# there's no equivalent override in place upstream of this call. Agg is
+# the standard non-interactive, render-to-memory/file backend -- all
+# this module needs (a Figure returned or saved to PNG), never a
+# GUI window.
+import matplotlib
+
+matplotlib.use("Agg")
+
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.figure import Figure
