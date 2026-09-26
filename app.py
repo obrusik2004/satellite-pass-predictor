@@ -38,7 +38,12 @@ from satellite_pass_predictor.propagation import compute_ground_track
 from satellite_pass_predictor.skyplot import build_sky_plot_figure
 from satellite_pass_predictor.tle_data import load_satellites
 from satellite_pass_predictor.visibility import PassDict, compute_passes
-from satellite_pass_predictor.visualization import PASS_TABLE_COLUMNS, build_pass_rows
+from satellite_pass_predictor.visualization import (
+    NOTE_CODE_LEGEND,
+    PASS_TABLE_COLUMNS,
+    build_pass_note_codes,
+    build_pass_rows,
+)
 
 st.set_page_config(page_title="Satellite Pass Predictor", layout="wide")
 
@@ -151,10 +156,16 @@ else:
     # Same rows/columns print_passes_table() and the HTML report show --
     # just the display columns (drop "_sort_key"/"_satellite"/"_pass",
     # build_pass_rows()'s internal bookkeeping fields, which aren't
-    # meant to be shown as table columns).
-    display_rows = [
-        {title: row[key] for key, title, _ in PASS_TABLE_COLUMNS} for row in rows
-    ]
+    # meant to be shown as table columns) -- except Notes, overridden
+    # below to short codes rather than build_pass_rows()'s full text:
+    # see build_pass_note_codes()'s docstring for why (a fixed-width
+    # interactive column, unlike the CLI table/HTML report this data
+    # also feeds, has no good way to show a full sentence).
+    display_rows = []
+    for row in rows:
+        display_row = {title: row[key] for key, title, _ in PASS_TABLE_COLUMNS}
+        display_row["Notes"] = build_pass_note_codes(cast(PassDict, row["_pass"]))
+        display_rows.append(display_row)
     # on_select="rerun" + selection_mode="single-row": confirmed against
     # the actually-pinned streamlit==1.64.0 (not assumed from docs --
     # this dataframe selection API changed across Streamlit versions),
@@ -178,10 +189,69 @@ else:
     # between reruns like this table's does, and adding a stable key
     # fixed it. A fixed key keeps this widget's identity stable across
     # reruns regardless of what the table displays.
+    # width="stretch" (full container width, matching the globe above
+    # and the rest of this wide-layout page) rather than width="content"
+    # (sizes the table to its own content) -- content was tried first
+    # but overcorrected: it made the whole table shrink to a narrow,
+    # oddly floating box unrelated to the rest of the page, since
+    # nothing else here is content-sized.
+    #
+    # width="stretch" does still redistribute leftover space evenly
+    # across every column, including Notes -- checked column_types.py
+    # directly, and there is no min/max-width or "don't grow" escape
+    # hatch for one column in this pinned streamlit==1.64.0's
+    # column_config. But measured directly (a canvas pixel probe, since
+    # these columns aren't real DOM elements) across 1024-1920px
+    # viewports, that redistribution no longer looks lopsided the way
+    # it did with full-sentence notes: Notes' configured "small" (75px)
+    # inflates to 83-187px depending on viewport, landing squarely in
+    # the middle of the pack alongside the other columns (which inflate
+    # by the same proportion) rather than dwarfing them the way a
+    # 280-400px-wide column of full sentences did. Once the column's
+    # own content is short, the redistribution "penalty" stops being
+    # visually distinguishable from ordinary column padding.
     event = st.dataframe(
-        display_rows, use_container_width=True, hide_index=True,
+        display_rows, width="stretch", hide_index=True,
         on_select="rerun", selection_mode="single-row", key="passes_table",
+        column_config={"Notes": st.column_config.TextColumn(
+            # "small", one of column_config's three named width presets
+            # alongside "medium"/"large" -- comfortably fits "LC" alone
+            # or a couple of codes comma-joined without truncating.
+            width="small",
+            # Column-header tooltip (hover the "Notes" header) as a
+            # lightweight, always-available second explanation of the
+            # codes, alongside the caption below rather than instead of
+            # it -- see the caption's own comment for why the caption
+            # stays as the primary one.
+            help="\n".join(f"- **{code}**: {meaning}" for code, meaning in NOTE_CODE_LEGEND),
+        )},
     )
+    # No genuine per-cell dynamic tooltip exists for a text column in
+    # this pinned streamlit==1.64.0 -- checked directly against
+    # column_types.py rather than assumed: every column type's "help"
+    # tooltip is documented and implemented identically as a *column
+    # header* tooltip (hovering the "Notes" label), never a per-cell
+    # one tied to that row's own value. That's a materially different,
+    # much simpler mechanism than pydeck's picking-based hover (globe.py),
+    # which reads whichever data point the GPU determined is under the
+    # cursor -- glide-data-grid (this table's renderer) has no
+    # equivalent per-cell hook exposed through Streamlit's API.
+    #
+    # Given that, the caption stays as the primary explanation (added
+    # above the header-help tooltip, not replaced by it): it's visible
+    # at a glance without requiring the user to discover and hover a
+    # specific header, which matters here since IP/CE/MH/LC are codes
+    # invented for this app, not a convention anyone would already
+    # know. The header tooltip is a low-cost bonus for anyone who does
+    # hover out of habit, not a replacement for it.
+    #
+    # Only shown when at least one row in the current table actually
+    # has a code to explain -- most windows have none, and the legend
+    # would just be noise pointing at an all-empty column.
+    if any(display_row["Notes"] for display_row in display_rows):
+        st.caption(
+            "Notes: " + " · ".join(f"**{code}** {meaning}" for code, meaning in NOTE_CODE_LEGEND)
+        )
 
     st.subheader("Sky Track")
     selected = event.selection.rows

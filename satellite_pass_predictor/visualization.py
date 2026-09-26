@@ -213,6 +213,50 @@ def build_pass_rows(
     return rows
 
 
+# (code, plain-English meaning) for every flag build_pass_note_codes()
+# below can emit -- the single source of truth for both that function
+# and the legend caption the Streamlit app shows alongside its table
+# (see app.py). Order matches build_pass_note_codes()'s own check
+# order, which in turn matches build_pass_rows()'s full-text notes
+# above -- kept in sync by test_visualization.py rather than by a
+# shared runtime structure, since with only four fixed flags a data-
+# driven abstraction here would be more indirection than the four
+# straight-line checks below are worth.
+NOTE_CODE_LEGEND: list[tuple[str, str]] = [
+    ("IP", "in progress at start of window -- true rise time unknown"),
+    ("CE", "cut off at end of window -- true set time unknown"),
+    ("MH", "max elevation may be higher -- was still rising when the window ended"),
+    ("LC", "low confidence -- too few samples; rerun with a finer step"),
+]
+
+
+def build_pass_note_codes(pass_: PassDict) -> str:
+    """
+    Compact comma-joined codes (IP/CE/MH/LC, see NOTE_CODE_LEGEND) for
+    the flags set on `pass_` -- a narrow-column-friendly alternative to
+    build_pass_rows()'s full descriptive "notes" text.
+
+    build_pass_rows()'s own "notes" field is left as full text: it's
+    shared by print_passes_table()'s plain-text CLI table and
+    reporting.py's HTML report, both of which have room for a full
+    sentence and no legend to pair codes against. The Streamlit app's
+    interactive table is the odd one out -- a fixed-width column that
+    was either truncating that full text or, sized to fit it, made the
+    rest of the table look lopsided (both tried directly, see app.py) --
+    so it uses these codes plus a legend caption instead.
+    """
+    codes: list[str] = []
+    if pass_["start_truncated"]:
+        codes.append("IP")
+    if pass_["end_truncated"]:
+        codes.append("CE")
+    if pass_["max_elevation_truncated"]:
+        codes.append("MH")
+    if pass_["low_confidence"]:
+        codes.append("LC")
+    return ", ".join(codes)
+
+
 def print_passes_table(passes_by_satellite: dict[str, list[PassDict]]) -> None:
     """
     Print one row per detected pass across all satellites, sorted by

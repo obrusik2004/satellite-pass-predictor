@@ -23,9 +23,12 @@ import numpy as np
 import pytest
 from skyfield.timelib import Timescale
 
+from satellite_pass_predictor.visibility import PassDict
 from satellite_pass_predictor.visualization import (
+    NOTE_CODE_LEGEND,
     _split_at_antimeridian,
     build_ground_tracks_figure,
+    build_pass_note_codes,
     plot_ground_tracks,
     print_passes_table,
 )
@@ -119,6 +122,70 @@ def test_print_passes_table_with_no_passes_prints_a_clean_message(
 
     output = capsys.readouterr().out
     assert "No passes" in output
+
+
+def _fake_pass(
+    ts: Timescale,
+    *,
+    start_truncated: bool = False,
+    end_truncated: bool = False,
+    max_elevation_truncated: bool = False,
+    low_confidence: bool = False,
+) -> PassDict:
+    """A minimal, valid-shaped PassDict with only the four note flags
+    varied -- build_pass_note_codes() only reads those, but PassDict's
+    TypedDict shape still requires the rest, so they get placeholder
+    values."""
+    t = ts.utc(2026, 1, 1, 0, 0, 0)
+    return {
+        "start_time": t,
+        "start_azimuth_deg": 0.0,
+        "start_truncated": start_truncated,
+        "end_time": t,
+        "end_azimuth_deg": 0.0,
+        "end_truncated": end_truncated,
+        "max_elevation_deg": 10.0,
+        "max_elevation_time": t,
+        "max_elevation_truncated": max_elevation_truncated,
+        "duration_minutes": 0.0,
+        "low_confidence": low_confidence,
+    }
+
+
+def test_build_pass_note_codes_no_flags_set_returns_empty_string(ts: Timescale) -> None:
+    assert build_pass_note_codes(_fake_pass(ts)) == ""
+
+
+def test_build_pass_note_codes_each_flag_maps_to_its_own_code(ts: Timescale) -> None:
+    assert build_pass_note_codes(_fake_pass(ts, start_truncated=True)) == "IP"
+    assert build_pass_note_codes(_fake_pass(ts, end_truncated=True)) == "CE"
+    assert build_pass_note_codes(_fake_pass(ts, max_elevation_truncated=True)) == "MH"
+    assert build_pass_note_codes(_fake_pass(ts, low_confidence=True)) == "LC"
+
+
+def test_build_pass_note_codes_joins_multiple_flags_in_a_fixed_order(ts: Timescale) -> None:
+    """Order should match build_pass_rows()'s own full-text note order
+    (start, end, max-elevation, low-confidence) regardless of the order
+    flags happen to be passed to _fake_pass() here."""
+    pass_ = _fake_pass(ts, low_confidence=True, start_truncated=True, end_truncated=True)
+
+    assert build_pass_note_codes(pass_) == "IP, CE, LC"
+
+
+def test_note_code_legend_covers_every_code_build_pass_note_codes_can_emit(
+    ts: Timescale,
+) -> None:
+    """Guards against the legend (shown in app.py) and the code-emitting
+    logic drifting apart -- e.g. a new flag added to one but not the
+    other."""
+    all_flags_pass = _fake_pass(
+        ts, start_truncated=True, end_truncated=True,
+        max_elevation_truncated=True, low_confidence=True,
+    )
+    emitted_codes = set(build_pass_note_codes(all_flags_pass).split(", "))
+    legend_codes = {code for code, _ in NOTE_CODE_LEGEND}
+
+    assert emitted_codes == legend_codes
 
 
 def test_plot_ground_tracks_creates_output_directory_if_missing(
