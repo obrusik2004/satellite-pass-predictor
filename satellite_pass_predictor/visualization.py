@@ -161,7 +161,7 @@ PASS_TABLE_COLUMNS: list[tuple[str, str, int]] = [
 
 def build_pass_rows(
     passes_by_satellite: dict[str, list[PassDict]],
-) -> list[dict[str, str | Time]]:
+) -> list[dict[str, str | Time | PassDict]]:
     """
     Flatten passes_by_satellite into one row per pass, with every field
     pre-formatted to a display string (matching PASS_TABLE_COLUMNS) and
@@ -170,11 +170,18 @@ def build_pass_rows(
     the two can't drift out of sync with each other.
 
     Local dict keys, not a PassDict-style TypedDict: this is a display-
-    formatting intermediate (every value coerced to `str`, plus a
-    "_sort_key" that isn't part of either rendering), not one of the
-    fixed data contracts passed between the package's logic modules.
+    formatting intermediate (every value coerced to `str`, plus
+    "_sort_key"/"_satellite"/"_pass" fields that aren't part of either
+    rendering), not one of the fixed data contracts passed between the
+    package's logic modules. "_satellite" and "_pass" carry the row's
+    original satellite name and raw PassDict through -- app.py's sky
+    plot needs the underlying pass (for its exact start/end times) once
+    a user selects a table row, and this is the one place that already
+    knows which PassDict a given display row came from; recovering that
+    mapping independently at the call site would mean re-deriving this
+    same sort order there too.
     """
-    rows: list[dict[str, str | Time]] = []
+    rows: list[dict[str, str | Time | PassDict]] = []
     for name, passes in passes_by_satellite.items():
         for p in passes:
             notes: list[str] = []
@@ -198,9 +205,11 @@ def build_pass_rows(
                 "duration_min": f"{p['duration_minutes']:.1f}",
                 "notes": ", ".join(notes),
                 "_sort_key": p["start_time"],
+                "_satellite": name,
+                "_pass": p,
             })
 
-    rows.sort(key=lambda r: r["_sort_key"])
+    rows.sort(key=lambda r: cast(Time, r["_sort_key"]))
     return rows
 
 

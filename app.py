@@ -19,6 +19,8 @@ expected and is exactly what makes this different from the static HTML
 report).
 """
 
+from typing import cast
+
 import streamlit as st
 from skyfield.api import load
 from skyfield.sgp4lib import EarthSatellite
@@ -33,8 +35,9 @@ from satellite_pass_predictor.config import (
 )
 from satellite_pass_predictor.globe import build_globe_deck
 from satellite_pass_predictor.propagation import compute_ground_track
+from satellite_pass_predictor.skyplot import build_sky_plot_figure
 from satellite_pass_predictor.tle_data import load_satellites
-from satellite_pass_predictor.visibility import compute_passes
+from satellite_pass_predictor.visibility import PassDict, compute_passes
 from satellite_pass_predictor.visualization import PASS_TABLE_COLUMNS, build_pass_rows
 
 st.set_page_config(page_title="Satellite Pass Predictor", layout="wide")
@@ -146,9 +149,54 @@ if not rows:
     st.info("No passes above threshold in this window.")
 else:
     # Same rows/columns print_passes_table() and the HTML report show --
-    # just the display columns (drop "_sort_key", build_pass_rows()'s
-    # internal sort key, which isn't meant to be shown).
+    # just the display columns (drop "_sort_key"/"_satellite"/"_pass",
+    # build_pass_rows()'s internal bookkeeping fields, which aren't
+    # meant to be shown as table columns).
     display_rows = [
         {title: row[key] for key, title, _ in PASS_TABLE_COLUMNS} for row in rows
     ]
-    st.dataframe(display_rows, use_container_width=True, hide_index=True)
+    # on_select="rerun" + selection_mode="single-row": confirmed against
+    # the actually-pinned streamlit==1.64.0 (not assumed from docs --
+    # this dataframe selection API changed across Streamlit versions),
+    # via inspect.signature(st.dataframe) and streamlit/elements/arrow.py
+    # directly. With on_select="rerun", st.dataframe() returns a
+    # DataframeState instead of a DeltaGenerator; event.selection.rows is
+    # a list of selected row *positions*, stable against the original
+    # data even if the user re-sorts by clicking a column header in the
+    # browser (confirmed in arrow.py's own docstring for that field) --
+    # exactly what's needed to index back into `rows` below.
+    #
+    # key="passes_table" is required, not cosmetic: every rerun
+    # recomputes passes_by_satellite from now = ts.now(), so the
+    # table's cell values shift by a few seconds each time. Without an
+    # explicit key, Streamlit derives this widget's identity partly
+    # from its data, so a click's data-derived id (pre-rerun) no longer
+    # matches the freshly-recomputed table's id (post-rerun) and the
+    # selection is silently dropped -- confirmed directly by bisecting
+    # against a minimal repro: identical setup, selection worked with
+    # static data and failed the instant the data was made to change
+    # between reruns like this table's does, and adding a stable key
+    # fixed it. A fixed key keeps this widget's identity stable across
+    # reruns regardless of what the table displays.
+    event = st.dataframe(
+        display_rows, use_container_width=True, hide_index=True,
+        on_select="rerun", selection_mode="single-row", key="passes_table",
+    )
+
+    st.subheader("Sky Track")
+    selected = event.selection.rows
+    if not selected:
+        st.info("Select a pass above to see its sky track.")
+    else:
+        # rows and display_rows are the same list, transformed 1:1 in
+        # the same order (see the comprehension above) -- so a selected
+        # display-row position indexes directly into `rows` to recover
+        # the satellite name and raw PassDict build_pass_rows() attached
+        # to it (see that function's docstring for why it carries these
+        # through rather than having this call site re-derive the same
+        # sort order independently).
+        selected_row = rows[selected[0]]
+        satellite_name = cast(str, selected_row["_satellite"])
+        pass_ = cast(PassDict, selected_row["_pass"])
+        fig = build_sky_plot_figure(satellites[satellite_name], pass_, KOUROU, ts)
+        st.plotly_chart(fig, use_container_width=True)
