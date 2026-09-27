@@ -85,9 +85,16 @@ def test_falls_back_to_cache_when_fetch_fails_but_cache_exists(
     (if stale) cached copy already exists -- it should fall back to
     that cached copy and print a warning explaining why, rather than
     silently pretending nothing happened.
+
+    The mocked fetch fails on every call, so this also exercises (as a
+    side effect) _fetch_tle_with_retries() exhausting all of its retries
+    before load_satellites()'s own fallback-to-cache logic ever sees the
+    OSError -- time.sleep is mocked out so that doesn't actually slow
+    this test down by several seconds.
     """
     monkeypatch.setattr(tle_data.load, "exists", lambda filename: True)
     monkeypatch.setattr(tle_data.load, "days_old", lambda filename: 3.0)
+    monkeypatch.setattr(tle_data.time, "sleep", lambda seconds: None)
 
     def _tle_file(*args, **kwargs):
         # First call (the network fetch, called with url=... reload=...)
@@ -116,8 +123,12 @@ def test_reraises_with_actionable_message_when_fetch_fails_and_no_cache_exists(
     with a message naming the satellite/NORAD ID and pointing at the
     likely cause, not just Skyfield's low-level "cannot download ..."
     text passed straight through.
+
+    Also exercises _fetch_tle_with_retries() exhausting its retries
+    first (time.sleep mocked out, same reasoning as the test above).
     """
     monkeypatch.setattr(tle_data.load, "exists", lambda filename: False)
+    monkeypatch.setattr(tle_data.time, "sleep", lambda seconds: None)
 
     def _tle_file(*args, **kwargs):
         raise OSError("<urlopen error [Errno 11001] getaddrinfo failed>")
@@ -127,6 +138,74 @@ def test_reraises_with_actionable_message_when_fetch_fails_and_no_cache_exists(
     with pytest.raises(OSError) as exc_info:
         tle_data.load_satellites(FAKE_SATELLITES)
 
+    message = str(exc_info.value)
+    assert "TESTSAT" in message
+    assert "99999" in message
+    assert "internet connection" in message
+
+
+def test_retries_a_flaky_fetch_and_succeeds_without_exhausting_all_attempts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    A transient failure (fewer than TLE_FETCH_MAX_RETRIES blips) should
+    be absorbed by _fetch_tle_with_retries() -- the fetch should retry
+    exactly as many times as it takes to succeed, not more, and
+    load_satellites() should return the eventually-successful result as
+    if nothing had gone wrong (no fallback-to-cache, no warning).
+    """
+    monkeypatch.setattr(tle_data.load, "exists", lambda filename: False)
+    sleep_calls: list[float] = []
+    monkeypatch.setattr(tle_data.time, "sleep", lambda seconds: sleep_calls.append(seconds))
+
+    call_count = 0
+
+    def _tle_file(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count < 3:  # fails twice, succeeds on the 3rd attempt
+            raise OSError("Connection timed out")
+        return ["sentinel-satellite"]
+
+    monkeypatch.setattr(tle_data.load, "tle_file", _tle_file)
+
+    result = tle_data.load_satellites(FAKE_SATELLITES)
+
+    assert result == {"TESTSAT": "sentinel-satellite"}
+    assert call_count == 3
+    # Exponential backoff: 1s after the 1st failure, 2s after the 2nd --
+    # no 3rd sleep, since the 3rd attempt succeeded.
+    assert sleep_calls == [1.0, 2.0]
+
+
+def test_gives_up_after_max_retries_rather_than_retrying_forever(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    A persistent failure (every attempt fails) should still raise the
+    same informative OSError load_satellites() already raised before
+    retries existed -- retries absorb a transient blip, they don't turn
+    a genuine, ongoing outage into an infinite/silent retry loop.
+    """
+    monkeypatch.setattr(tle_data.load, "exists", lambda filename: False)
+    monkeypatch.setattr(tle_data.time, "sleep", lambda seconds: None)
+
+    call_count = 0
+
+    def _tle_file(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        raise OSError("Connection timed out")
+
+    monkeypatch.setattr(tle_data.load, "tle_file", _tle_file)
+
+    with pytest.raises(OSError) as exc_info:
+        tle_data.load_satellites(FAKE_SATELLITES)
+
+    # TLE_FETCH_MAX_RETRIES retries plus the initial attempt -- not one
+    # call more (no infinite loop) and not one fewer (retries actually
+    # happened).
+    assert call_count == tle_data.TLE_FETCH_MAX_RETRIES + 1
     message = str(exc_info.value)
     assert "TESTSAT" in message
     assert "99999" in message

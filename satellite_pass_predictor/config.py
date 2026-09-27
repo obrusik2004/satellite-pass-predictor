@@ -48,6 +48,21 @@ CELESTRAK_URL: str = (
 # don't want to hit Celestrak's servers on every single run.
 MAX_TLE_AGE_DAYS: float = 1.0
 
+# Retries for the actual Celestrak network fetch (not the empty/
+# malformed-response handling, which is a different failure mode with
+# its own explicit ValueError -- see tle_data.py). Streamlit Community
+# Cloud's outbound networking has been observed to be intermittently
+# flaky (confirmed via multiple independent community reports across
+# different external APIs, not specific to Celestrak), so a single
+# dropped connection or timeout shouldn't immediately fall back to a
+# stale cache or fail outright the way a persistent outage still should.
+# 3 retries (4 attempts total) with delays doubling from 1s->2s->4s: a
+# worst case of ~7s of added waiting is tolerable for a Streamlit user
+# watching a spinner, and enough attempts to absorb a brief blip without
+# turning this into an unbounded retry loop for a genuine outage.
+TLE_FETCH_MAX_RETRIES: int = 3
+TLE_FETCH_RETRY_BASE_DELAY_SECONDS: float = 1.0
+
 TLE_CACHE_DIR: str = "data"
 OUTPUT_DIR: str = "output"
 

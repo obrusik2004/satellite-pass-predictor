@@ -4,11 +4,59 @@ for the tracked satellites from Celestrak.
 """
 
 import os
+import time
+from typing import cast
 
 from skyfield.api import load
 from skyfield.sgp4lib import EarthSatellite
 
-from .config import CELESTRAK_URL, MAX_TLE_AGE_DAYS, SATELLITES, TLE_CACHE_DIR
+from .config import (
+    CELESTRAK_URL,
+    MAX_TLE_AGE_DAYS,
+    SATELLITES,
+    TLE_CACHE_DIR,
+    TLE_FETCH_MAX_RETRIES,
+    TLE_FETCH_RETRY_BASE_DELAY_SECONDS,
+)
+
+
+def _fetch_tle_with_retries(
+    url: str, filename: str, reload: bool
+) -> list[EarthSatellite]:
+    """
+    load.tle_file()'s actual network fetch (the download itself, not
+    the reading-a-local-file fallback load_satellites() uses when this
+    is exhausted), retried with exponential backoff on OSError -- see
+    config.TLE_FETCH_MAX_RETRIES's comment for why this exists at all
+    (Streamlit Community Cloud's outbound networking is intermittently
+    flaky) rather than being an arbitrary safety net.
+
+    Only OSError is retried: that's specifically the network-failure
+    exception Skyfield's downloader raises (a dropped connection,
+    timeout, DNS failure, HTTP error, ...). Any other exception is a
+    different problem this retry loop has no business papering over,
+    and propagates immediately, same as if this function didn't exist.
+
+    After TLE_FETCH_MAX_RETRIES retries, the final attempt is made with
+    no surrounding try/except, so its OSError (if it still fails)
+    propagates to load_satellites() completely unchanged -- that
+    function's own handling (fall back to a cached copy if one exists,
+    otherwise re-raise with an actionable message) still runs exactly
+    as it did before this retry loop existed. This function only
+    absorbs a *transient* blip; a persistent failure ends up in exactly
+    the same place it always did.
+    """
+    for attempt in range(TLE_FETCH_MAX_RETRIES):
+        try:
+            # load.tle_file() is skyfield's own untyped call (see
+            # mypy.ini's skyfield.* override) -- cast() tells mypy this
+            # returns the list[EarthSatellite] it actually does, the
+            # same pattern used throughout this package wherever a
+            # skyfield call's result needs a precise type.
+            return cast(list[EarthSatellite], load.tle_file(url, filename=filename, reload=reload))
+        except OSError:
+            time.sleep(TLE_FETCH_RETRY_BASE_DELAY_SECONDS * (2 ** attempt))
+    return cast(list[EarthSatellite], load.tle_file(url, filename=filename, reload=reload))
 
 
 def load_satellites(
@@ -42,7 +90,7 @@ def load_satellites(
             or load.days_old(filename) > MAX_TLE_AGE_DAYS
         )
         try:
-            entries = load.tle_file(url, filename=filename, reload=stale)
+            entries = _fetch_tle_with_retries(url, filename, reload=stale)
         except OSError as e:
             # Celestrak being briefly unreachable/rate-limited shouldn't
             # crash the whole pipeline if we already have a usable (if a
