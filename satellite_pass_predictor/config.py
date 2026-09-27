@@ -56,12 +56,32 @@ MAX_TLE_AGE_DAYS: float = 1.0
 # different external APIs, not specific to Celestrak), so a single
 # dropped connection or timeout shouldn't immediately fall back to a
 # stale cache or fail outright the way a persistent outage still should.
-# 3 retries (4 attempts total) with delays doubling from 1s->2s->4s: a
-# worst case of ~7s of added waiting is tolerable for a Streamlit user
-# watching a spinner, and enough attempts to absorb a brief blip without
+# 3 retries (4 attempts total) with delays doubling from 1s->2s->4s
+# between them, plus TLE_FETCH_TIMEOUT_SECONDS bounding each individual
+# attempt (see that constant -- without it, a single hung attempt could
+# run far longer than this backoff math alone would suggest). Worst
+# case if every attempt genuinely hangs the full timeout: 4 *
+# TLE_FETCH_TIMEOUT_SECONDS (attempts) + 1+2+4 (backoff between them) =
+# 47s -- not fast, but bounded and finite, for what should be a rare
+# total-outage case; enough attempts to absorb a brief blip without
 # turning this into an unbounded retry loop for a genuine outage.
 TLE_FETCH_MAX_RETRIES: int = 3
 TLE_FETCH_RETRY_BASE_DELAY_SECONDS: float = 1.0
+
+# Skyfield's download() (which load.tle_file() calls under the hood)
+# passes no timeout to urlopen() at all -- confirmed directly against
+# skyfield/iokit.py's source, not assumed -- so without this, a hung
+# connection attempt relies entirely on Python's global default socket
+# timeout (None: unbounded) and falls back to whatever the OS/TCP stack
+# itself eventually does (SYN retransmission exhaustion, commonly tens
+# of seconds to a couple of minutes), not a short, predictable failure.
+# tle_data.py bounds each fetch attempt to this many seconds via
+# socket.setdefaulttimeout(), scoped narrowly around just that call.
+# 10s is generous for what this actually has to do -- DNS + TCP + TLS
+# handshake plus downloading a TLE file that's only a few hundred bytes
+# -- while still failing fast enough that TLE_FETCH_MAX_RETRIES retries
+# add a bounded, known worst case rather than an open-ended one.
+TLE_FETCH_TIMEOUT_SECONDS: float = 10.0
 
 TLE_CACHE_DIR: str = "data"
 OUTPUT_DIR: str = "output"

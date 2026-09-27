@@ -1,80 +1,143 @@
 """
 Tests for satellite_pass_predictor.tle_data.
 
-load_satellites() is mostly a thin wrapper around Skyfield's own
-Loader (load.tle_file/load.exists/load.days_old) plus a network call to
-Celestrak -- exercising *that* for real would mean either hitting the
-network in a test suite (flaky, slow, exactly what we're avoiding) or
-asserting on real file mtimes (fragile, timing-dependent). Not worth it:
-Skyfield's own caching mechanics are Skyfield's responsibility to test,
-not ours.
+load_satellites() is mostly a thin wrapper around Skyfield's own Loader
+(load.tle_file/load.exists/load.days_old) for the no-network-needed path,
+plus a direct requests.get() call (not Skyfield's own download(), see
+_download_and_cache_tle()'s docstring for why) for the actual network
+fetch -- exercising *that* for real would mean either hitting the network
+in a test suite (flaky, slow, exactly what we're avoiding) or asserting
+on real file mtimes (fragile, timing-dependent). Not worth it: Skyfield's
+own caching mechanics and requests' own HTTP handling are each library's
+responsibility to test, not ours.
 
-What *is* worth testing is the logic this module adds on top of
-Skyfield: the staleness decision (does it ask for reload=True at the
-right times?), the OSError fallback-to-cache behavior (does a failed
-fetch degrade to the cached copy when one exists, and re-raise with an
-actionable message when it doesn't?), and the empty-response check (does
-a response with no usable TLE in it -- e.g. an unrecognized/decayed
-NORAD ID -- raise a clear ValueError instead of a bare IndexError?).
-All exercised here with Skyfield's Loader methods mocked out -- no
-network, no real TLE files, no timing dependence.
+What *is* worth testing is the logic this module adds on top of both:
+the staleness decision (does a fresh cache skip the network entirely,
+and does a stale/missing one trigger a fetch?), the OSError fallback-to-
+cache behavior (does a failed fetch degrade to the cached copy when one
+exists, and re-raise with an actionable message when it doesn't?), the
+empty-response check (does a response with no usable TLE in it -- e.g.
+an unrecognized/decayed NORAD ID -- raise a clear ValueError instead of
+a bare IndexError?), the retry-with-backoff around the actual fetch
+(does it retry the right number of times and eventually succeed, and
+does it still give up and raise after exhausting retries rather than
+looping forever?), and the per-call timeout passed to requests.get()
+(is it actually passed, and does a requests exception get translated to
+the same OSError type the rest of this module already handles?). All
+exercised here with Skyfield's Loader methods and requests.get() mocked
+out, and time.sleep mocked out where retries are exercised -- no
+network, no real TLE files beyond the one fixture used as realistic
+response bytes, no timing dependence, no test that actually waits out a
+real retry delay or a real timeout.
 """
 
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+import requests
 
 from satellite_pass_predictor import tle_data
 
 FAKE_SATELLITES = {"TESTSAT": 99999}
 
+# Real TLE bytes (the same fixture conftest.py's iss_satellite fixture
+# uses) for tests that exercise the real requests.get() -> write-to-
+# cache -> parse_tle_file() pipeline -- using genuine, valid TLE text
+# here (rather than a mocked-out parse step) is what actually proves
+# that pipeline is wired together correctly end to end.
+_FAKE_TLE_BYTES = (
+    b"ISS (ZARYA)\n"
+    b"1 25544U 98067A   26263.78762384  .00007766  00000+0  14793-3 0  9996\n"
+    b"2 25544  51.6308 186.9475 0004819 163.3027 196.8121 15.49200337586572\n"
+)
 
-def test_uses_cached_copy_without_reload_when_fresh(monkeypatch: pytest.MonkeyPatch) -> None:
+
+def _fake_response(content: bytes = _FAKE_TLE_BYTES) -> MagicMock:
+    """A requests.Response stand-in: raise_for_status() is a no-op (as
+    it is for any real 2xx response) and .content is the given bytes."""
+    response = MagicMock()
+    response.raise_for_status = MagicMock()
+    response.content = content
+    return response
+
+
+def test_uses_cached_copy_without_reload_when_fresh(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A cache file that exists and is younger than MAX_TLE_AGE_DAYS
-    should be used as-is (reload=False), not re-fetched."""
+    should be used as-is (reload=False) via Skyfield's own tle_file(),
+    not re-fetched -- no network call (requests.get) should happen."""
     monkeypatch.setattr(tle_data.load, "exists", lambda filename: True)
     monkeypatch.setattr(tle_data.load, "days_old", lambda filename: 0.1)
     mock_tle_file = MagicMock(return_value=["sentinel-satellite"])
     monkeypatch.setattr(tle_data.load, "tle_file", mock_tle_file)
+    mock_get = MagicMock(side_effect=AssertionError("should not fetch when cache is fresh"))
+    monkeypatch.setattr(tle_data.requests, "get", mock_get)
 
     result = tle_data.load_satellites(FAKE_SATELLITES)
 
     assert result == {"TESTSAT": "sentinel-satellite"}
     _, kwargs = mock_tle_file.call_args
     assert kwargs["reload"] is False
+    mock_get.assert_not_called()
 
 
-def test_reloads_when_cache_is_older_than_max_age(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_reloads_when_cache_is_older_than_max_age(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """A cache file older than MAX_TLE_AGE_DAYS should trigger a
-    refetch (reload=True), even though a cached copy exists."""
+    network fetch (via requests.get(), not Skyfield's tle_file()), even
+    though a cached copy exists."""
+    monkeypatch.setattr(tle_data, "TLE_CACHE_DIR", str(tmp_path))
     monkeypatch.setattr(tle_data.load, "exists", lambda filename: True)
     monkeypatch.setattr(tle_data.load, "days_old", lambda filename: 5.0)
-    mock_tle_file = MagicMock(return_value=["sentinel-satellite"])
-    monkeypatch.setattr(tle_data.load, "tle_file", mock_tle_file)
+    mock_get = MagicMock(return_value=_fake_response())
+    monkeypatch.setattr(tle_data.requests, "get", mock_get)
 
-    tle_data.load_satellites(FAKE_SATELLITES)
+    result = tle_data.load_satellites(FAKE_SATELLITES)
 
-    _, kwargs = mock_tle_file.call_args
-    assert kwargs["reload"] is True
+    assert result["TESTSAT"].name == "ISS (ZARYA)"
+    args, kwargs = mock_get.call_args
+    assert args[0] == tle_data.CELESTRAK_URL.format(norad_id=99999)
+    assert kwargs["timeout"] == tle_data.TLE_FETCH_TIMEOUT_SECONDS
 
 
-def test_reloads_when_no_cache_exists(monkeypatch: pytest.MonkeyPatch) -> None:
-    """No cache file at all should also trigger reload=True, regardless
-    of whatever days_old() would say (it shouldn't even be consulted --
-    `not exists` short-circuits the `or`)."""
+def test_reloads_when_no_cache_exists(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """No cache file at all should also trigger a network fetch,
+    regardless of whatever days_old() would say (it shouldn't even be
+    consulted -- `not exists` short-circuits the `or`)."""
+    monkeypatch.setattr(tle_data, "TLE_CACHE_DIR", str(tmp_path))
     monkeypatch.setattr(tle_data.load, "exists", lambda filename: False)
 
     def _unexpected_days_old(filename: str) -> float:
         raise AssertionError("days_old() should not be called when the cache doesn't exist")
 
     monkeypatch.setattr(tle_data.load, "days_old", _unexpected_days_old)
-    mock_tle_file = MagicMock(return_value=["sentinel-satellite"])
-    monkeypatch.setattr(tle_data.load, "tle_file", mock_tle_file)
+    mock_get = MagicMock(return_value=_fake_response())
+    monkeypatch.setattr(tle_data.requests, "get", mock_get)
+
+    result = tle_data.load_satellites(FAKE_SATELLITES)
+
+    assert result["TESTSAT"].name == "ISS (ZARYA)"
+    mock_get.assert_called_once()
+
+
+def test_fetch_writes_the_response_to_the_cache_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A successful fetch should write the raw response bytes to the
+    local cache file -- the same on-disk artifact Skyfield's own
+    downloader would have produced -- so a later run can use it as the
+    cache."""
+    monkeypatch.setattr(tle_data, "TLE_CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(tle_data.load, "exists", lambda filename: False)
+    monkeypatch.setattr(tle_data.requests, "get", MagicMock(return_value=_fake_response()))
 
     tle_data.load_satellites(FAKE_SATELLITES)
 
-    _, kwargs = mock_tle_file.call_args
-    assert kwargs["reload"] is True
+    cached_file = tmp_path / "tle_99999.txt"
+    assert cached_file.read_bytes() == _FAKE_TLE_BYTES
 
 
 def test_falls_back_to_cache_when_fetch_fails_but_cache_exists(
@@ -83,8 +146,9 @@ def test_falls_back_to_cache_when_fetch_fails_but_cache_exists(
     """
     A network hiccup shouldn't crash the whole pipeline if a usable
     (if stale) cached copy already exists -- it should fall back to
-    that cached copy and print a warning explaining why, rather than
-    silently pretending nothing happened.
+    that cached copy (read via Skyfield's own tle_file(), unrelated to
+    the requests-based fetch) and print a warning explaining why,
+    rather than silently pretending nothing happened.
 
     The mocked fetch fails on every call, so this also exercises (as a
     side effect) _fetch_tle_with_retries() exhausting all of its retries
@@ -95,16 +159,13 @@ def test_falls_back_to_cache_when_fetch_fails_but_cache_exists(
     monkeypatch.setattr(tle_data.load, "exists", lambda filename: True)
     monkeypatch.setattr(tle_data.load, "days_old", lambda filename: 3.0)
     monkeypatch.setattr(tle_data.time, "sleep", lambda seconds: None)
-
-    def _tle_file(*args, **kwargs):
-        # First call (the network fetch, called with url=... reload=...)
-        # fails; the fallback call (just the cached filename, positional,
-        # no reload kwarg) succeeds.
-        if "reload" in kwargs:
-            raise OSError("503 Service Unavailable")
-        return ["sentinel-satellite"]
-
-    monkeypatch.setattr(tle_data.load, "tle_file", _tle_file)
+    monkeypatch.setattr(
+        tle_data.requests, "get",
+        MagicMock(side_effect=requests.ConnectionError("503 Service Unavailable")),
+    )
+    # The fallback read (load.tle_file(filename), no reload/url) is
+    # Skyfield's own local-file path, untouched by this change.
+    monkeypatch.setattr(tle_data.load, "tle_file", lambda *a, **k: ["sentinel-satellite"])
 
     result = tle_data.load_satellites(FAKE_SATELLITES)
 
@@ -121,19 +182,18 @@ def test_reraises_with_actionable_message_when_fetch_fails_and_no_cache_exists(
     No cached fallback available (e.g. the very first run ever, with no
     internet) -- the failure should propagate as an OSError, but wrapped
     with a message naming the satellite/NORAD ID and pointing at the
-    likely cause, not just Skyfield's low-level "cannot download ..."
-    text passed straight through.
+    likely cause, not just a raw requests exception passed straight
+    through.
 
     Also exercises _fetch_tle_with_retries() exhausting its retries
     first (time.sleep mocked out, same reasoning as the test above).
     """
     monkeypatch.setattr(tle_data.load, "exists", lambda filename: False)
     monkeypatch.setattr(tle_data.time, "sleep", lambda seconds: None)
-
-    def _tle_file(*args, **kwargs):
-        raise OSError("<urlopen error [Errno 11001] getaddrinfo failed>")
-
-    monkeypatch.setattr(tle_data.load, "tle_file", _tle_file)
+    monkeypatch.setattr(
+        tle_data.requests, "get",
+        MagicMock(side_effect=requests.ConnectionError("<urlopen error [Errno 11001] getaddrinfo failed>")),
+    )
 
     with pytest.raises(OSError) as exc_info:
         tle_data.load_satellites(FAKE_SATELLITES)
@@ -145,7 +205,7 @@ def test_reraises_with_actionable_message_when_fetch_fails_and_no_cache_exists(
 
 
 def test_retries_a_flaky_fetch_and_succeeds_without_exhausting_all_attempts(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """
     A transient failure (fewer than TLE_FETCH_MAX_RETRIES blips) should
@@ -154,24 +214,25 @@ def test_retries_a_flaky_fetch_and_succeeds_without_exhausting_all_attempts(
     load_satellites() should return the eventually-successful result as
     if nothing had gone wrong (no fallback-to-cache, no warning).
     """
+    monkeypatch.setattr(tle_data, "TLE_CACHE_DIR", str(tmp_path))
     monkeypatch.setattr(tle_data.load, "exists", lambda filename: False)
     sleep_calls: list[float] = []
     monkeypatch.setattr(tle_data.time, "sleep", lambda seconds: sleep_calls.append(seconds))
 
     call_count = 0
 
-    def _tle_file(*args, **kwargs):
+    def _get(*args, **kwargs):
         nonlocal call_count
         call_count += 1
         if call_count < 3:  # fails twice, succeeds on the 3rd attempt
-            raise OSError("Connection timed out")
-        return ["sentinel-satellite"]
+            raise requests.Timeout("Connection timed out")
+        return _fake_response()
 
-    monkeypatch.setattr(tle_data.load, "tle_file", _tle_file)
+    monkeypatch.setattr(tle_data.requests, "get", _get)
 
     result = tle_data.load_satellites(FAKE_SATELLITES)
 
-    assert result == {"TESTSAT": "sentinel-satellite"}
+    assert result["TESTSAT"].name == "ISS (ZARYA)"
     assert call_count == 3
     # Exponential backoff: 1s after the 1st failure, 2s after the 2nd --
     # no 3rd sleep, since the 3rd attempt succeeded.
@@ -192,12 +253,12 @@ def test_gives_up_after_max_retries_rather_than_retrying_forever(
 
     call_count = 0
 
-    def _tle_file(*args, **kwargs):
+    def _get(*args, **kwargs):
         nonlocal call_count
         call_count += 1
-        raise OSError("Connection timed out")
+        raise requests.Timeout("Connection timed out")
 
-    monkeypatch.setattr(tle_data.load, "tle_file", _tle_file)
+    monkeypatch.setattr(tle_data.requests, "get", _get)
 
     with pytest.raises(OSError) as exc_info:
         tle_data.load_satellites(FAKE_SATELLITES)
@@ -212,6 +273,81 @@ def test_gives_up_after_max_retries_rather_than_retrying_forever(
     assert "internet connection" in message
 
 
+def test_fetch_passes_the_configured_timeout_to_requests_get(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """
+    requests.get()'s own `timeout` argument is what bounds this fetch
+    now (see _download_and_cache_tle()'s docstring for why this
+    replaced an earlier socket.setdefaulttimeout()-based approach: that
+    mutated a process-global default, unsafe under Streamlit's real
+    per-session-thread concurrency, where one session's cleanup could
+    silently unbound another session's still-in-flight fetch).
+    requests.get()'s timeout is a plain per-call argument with no
+    shared state at all, so this just confirms it's actually passed,
+    not some other mechanism silently doing nothing.
+    """
+    monkeypatch.setattr(tle_data, "TLE_CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(tle_data.load, "exists", lambda filename: False)
+    mock_get = MagicMock(return_value=_fake_response())
+    monkeypatch.setattr(tle_data.requests, "get", mock_get)
+
+    tle_data.load_satellites(FAKE_SATELLITES)
+
+    _, kwargs = mock_get.call_args
+    assert kwargs["timeout"] == tle_data.TLE_FETCH_TIMEOUT_SECONDS
+
+
+def test_requests_exception_is_translated_to_os_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    A requests exception (timeout, dropped connection, HTTP error
+    status, ...) must surface as OSError, not a raw requests exception
+    -- that's what the retry loop's `except OSError` and
+    load_satellites()'s own fallback/re-raise handling both key on.
+    Checked with two different requests exception types, since
+    requests.RequestException is a base class covering several.
+    """
+    monkeypatch.setattr(tle_data.load, "exists", lambda filename: False)
+    monkeypatch.setattr(tle_data.time, "sleep", lambda seconds: None)
+
+    for exc in [requests.Timeout("timed out"), requests.ConnectionError("refused")]:
+        monkeypatch.setattr(tle_data.requests, "get", MagicMock(side_effect=exc))
+
+        with pytest.raises(OSError):
+            tle_data.load_satellites(FAKE_SATELLITES)
+
+
+def test_http_error_status_is_checked_and_not_handed_to_the_tle_parser(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    A non-2xx response (e.g. Celestrak returning a 404/500 error page)
+    must not be treated as successful content and handed to
+    parse_tle_file() as if it were real TLE data -- _download_and_cache_tle()
+    calls response.raise_for_status() specifically to catch this, before
+    ever looking at the response body.
+
+    Uses a real requests.Response (not a mock standing in for it) with
+    an actual error status code, so this proves raise_for_status()
+    itself is what's being relied on -- not just that some exception,
+    however it might arise, happens to get translated to OSError.
+    """
+    monkeypatch.setattr(tle_data.load, "exists", lambda filename: False)
+    monkeypatch.setattr(tle_data.time, "sleep", lambda seconds: None)
+
+    error_response = requests.Response()
+    error_response.status_code = 404
+    error_response._content = b"<html>Not Found</html>"  # would fail to parse as TLE anyway
+    monkeypatch.setattr(tle_data.requests, "get", MagicMock(return_value=error_response))
+
+    with pytest.raises(OSError) as exc_info:
+        tle_data.load_satellites(FAKE_SATELLITES)
+
+    assert "TESTSAT" in str(exc_info.value)
+
+
 def test_raises_value_error_when_response_has_no_usable_tle_data(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -222,10 +358,36 @@ def test_raises_value_error_when_response_has_no_usable_tle_data(
     empty list. Without a check for this, entries[0] would raise a bare
     IndexError with no indication of the real cause -- this should
     instead be a clear ValueError naming the satellite and NORAD ID.
+    Exercised here via the fresh-cache/no-network path (Skyfield's own
+    tle_file()); the requests-based fetch path shares the same
+    parse-then-check logic (parse_tle_file() -> load_satellites()'s
+    `if not entries` check), not a separate implementation of it.
     """
     monkeypatch.setattr(tle_data.load, "exists", lambda filename: True)
     monkeypatch.setattr(tle_data.load, "days_old", lambda filename: 0.1)
     monkeypatch.setattr(tle_data.load, "tle_file", lambda *a, **k: [])
+
+    with pytest.raises(ValueError) as exc_info:
+        tle_data.load_satellites(FAKE_SATELLITES)
+
+    message = str(exc_info.value)
+    assert "TESTSAT" in message
+    assert "99999" in message
+
+
+def test_raises_value_error_when_fetched_response_has_no_usable_tle_data(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """
+    Same check as above, but for a freshly-*fetched* (not cached)
+    empty/malformed response -- proves the requests-based fetch path's
+    real parse_tle_file() call (not a mock standing in for it) also
+    reaches load_satellites()'s empty-entries check correctly, end to
+    end.
+    """
+    monkeypatch.setattr(tle_data, "TLE_CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(tle_data.load, "exists", lambda filename: False)
+    monkeypatch.setattr(tle_data.requests, "get", MagicMock(return_value=_fake_response(b"")))
 
     with pytest.raises(ValueError) as exc_info:
         tle_data.load_satellites(FAKE_SATELLITES)
