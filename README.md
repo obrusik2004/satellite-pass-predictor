@@ -158,11 +158,15 @@ host, unrelated to Celestrak's own infrastructure).
   matches what was actually requested) *before* writing anything, and never
   overwrites a previously-published file with a bad response — a satellite
   that fails to refresh just keeps its last good file.
-- **`.github/workflows/refresh-tles.yml`** runs that script every 6 hours
-  (plus on manual trigger), then publishes `tle/` as a single orphan commit
-  on the `tle-data` branch — force-pushed each run, so the branch never
-  grows past one commit — authored by `github-actions[bot]`. Publishing to
-  `main` instead would trigger a Streamlit redeploy on every refresh and
+- **`.github/workflows/refresh-tles.yml`** installs only
+  **`requirements-fetch.txt`** (the small subset of `requirements.txt` that
+  `scripts/fetch_tles.py` actually needs, kept in sync with it by a test)
+  rather than the full `requirements.txt`, so a PyPI hiccup on an unrelated
+  package (streamlit, pandas, ...) can't fail this run. It then runs that
+  script every 6 hours (plus on manual trigger), then publishes `tle/` as a
+  single orphan commit on the `tle-data` branch — force-pushed each run, so
+  the branch never grows past one commit — authored by `github-actions[bot]`.
+  Publishing to `main` instead would trigger a Streamlit redeploy on every refresh and
   pollute the commit history with a run every 6 hours; a dedicated branch
   avoids both.
 - **The app** (`tle_data.load_satellites(source="mirror")`) reads TLEs from
