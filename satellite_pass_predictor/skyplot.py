@@ -32,6 +32,7 @@ from skyfield.sgp4lib import EarthSatellite
 from skyfield.timelib import Timescale
 from skyfield.toposlib import GeographicPosition
 
+from .config import SATELLITE_COLORS, THEME_BACKGROUND_COLOR, THEME_BORDER_COLOR, THEME_TEXT_COLOR
 from .time_utils import build_time_grid
 from .visibility import PassDict, compute_altaz
 
@@ -46,9 +47,20 @@ from .visibility import PassDict, compute_altaz
 # the globe's ground tracks.
 SKY_PLOT_STEP_SECONDS: float = 5.0
 
-_TRACK_COLOR = "#1f77b4"  # matches globe.py/visualization.py's first default color
-_RISE_COLOR = "#2ca02c"
-_SET_COLOR = "#d62728"
+# Rise (AOS)/set (LOS) markers are neutral, not colored by satellite --
+# unlike the track itself (satellite_name's SATELLITE_COLORS lookup
+# below). An earlier version used green/red, which collided with two of
+# the four actual satellite colors (BEESAT-1's green, ISS's red) once
+# those were pinned to exact ESA-palette hex values -- a marker that
+# happens to match a *different* satellite's track color is actively
+# misleading, not just a missed opportunity for consistency. Neutral
+# white/light-grey can't collide with any of them, so rise vs. set is
+# distinguished by marker shape (circle vs. square, see the traces
+# below) rather than color. Checked directly (computed, not eyeballed)
+# against THEME_BACKGROUND_COLOR: 17.2:1 and 9.0:1 respectively, both
+# far past WCAG's 3:1 non-text minimum.
+_RISE_COLOR = "#FFFFFF"
+_SET_COLOR = "#B0BEC5"
 
 
 def build_sky_plot_figure(
@@ -56,6 +68,7 @@ def build_sky_plot_figure(
     pass_: PassDict,
     observer: GeographicPosition,
     ts: Timescale,
+    satellite_name: str,
     step_seconds: float = SKY_PLOT_STEP_SECONDS,
 ) -> go.Figure:
     """
@@ -82,9 +95,24 @@ def build_sky_plot_figure(
     angularaxis rotation=90 (rotates the 0-degree position from the
     default "3 o'clock" to "12 o'clock") and direction="clockwise".
 
-    Start (rise) and end (set) are marked with distinct markers/colors
-    so the direction of travel across the sky is clear even before
-    reading the arrow-less line between them.
+    Start and end are marked with standard ground-station terminology --
+    AOS ("acquisition of signal", rise) and LOS ("loss of signal", set)
+    -- as distinct marker shapes (circle vs. square) in a neutral,
+    satellite-independent color (see _RISE_COLOR/_SET_COLOR's own
+    comment for why not a fixed green/red), so the direction of travel
+    across the sky is clear even before reading the arrow-less line
+    between them.
+
+    The track itself is colored via config.SATELLITE_COLORS[satellite_name]
+    -- the same per-satellite mapping the globe, passes table, and
+    matplotlib figure all read, so a satellite's color is identical
+    everywhere it's drawn in this app. Taken as an explicit parameter
+    rather than read off `sat.name`: skyfield's EarthSatellite does carry
+    a `.name` attribute from its TLE, and it happens to match this app's
+    display names today, but that's an incidental fact about Celestrak's
+    current TLE naming, not a guaranteed contract -- app.py already has
+    the display name in scope at the one call site that matters, so
+    there's no reason to rely on it matching instead.
     """
     duration_hours = (pass_["end_time"].tt - pass_["start_time"].tt) * 24.0
     t = build_time_grid(
@@ -104,25 +132,32 @@ def build_sky_plot_figure(
     fig = go.Figure()
     fig.add_trace(go.Scatterpolar(
         r=radius, theta=azimuth_deg, mode="lines", name="Pass",
-        line={"color": _TRACK_COLOR, "width": 2},
+        line={"color": SATELLITE_COLORS[satellite_name], "width": 2},
         customdata=elevation_deg,
         hovertemplate="az %{theta:.1f}°, el %{customdata:.1f}°<extra></extra>",
     ))
     fig.add_trace(go.Scatterpolar(
-        r=[radius[0]], theta=[azimuth_deg[0]], mode="markers", name="Rise",
+        r=[radius[0]], theta=[azimuth_deg[0]], mode="markers", name="AOS (rise)",
         marker={"color": _RISE_COLOR, "size": 12, "symbol": "circle"},
         customdata=[elevation_deg[0]],
-        hovertemplate="Rise: az %{theta:.1f}°, el %{customdata:.1f}°<extra></extra>",
+        hovertemplate="AOS (rise): az %{theta:.1f}°, el %{customdata:.1f}°<extra></extra>",
     ))
     fig.add_trace(go.Scatterpolar(
-        r=[radius[-1]], theta=[azimuth_deg[-1]], mode="markers", name="Set",
+        r=[radius[-1]], theta=[azimuth_deg[-1]], mode="markers", name="LOS (set)",
         marker={"color": _SET_COLOR, "size": 12, "symbol": "square"},
         customdata=[elevation_deg[-1]],
-        hovertemplate="Set: az %{theta:.1f}°, el %{customdata:.1f}°<extra></extra>",
+        hovertemplate="LOS (set): az %{theta:.1f}°, el %{customdata:.1f}°<extra></extra>",
     ))
 
     fig.update_layout(
         polar={
+            # Matches the app's theme (config.py's THEME_* constants,
+            # also set in .streamlit/config.toml) rather than Plotly's
+            # own default white paper/plot background -- Plotly charts
+            # don't inherit Streamlit's theme automatically, so without
+            # this the chart would show as a plain white rectangle
+            # dropped into an otherwise dark navy page.
+            "bgcolor": THEME_BACKGROUND_COLOR,
             "radialaxis": {
                 "range": [0, 90],
                 # tickvals are radius (0=center..90=edge); ticktext is
@@ -134,6 +169,9 @@ def build_sky_plot_figure(
                 # zero" option that would do both at once).
                 "tickvals": [0, 30, 60, 90],
                 "ticktext": ["90°", "60°", "30°", "0°"],
+                "gridcolor": THEME_BORDER_COLOR,
+                "linecolor": THEME_BORDER_COLOR,
+                "color": THEME_TEXT_COLOR,
             },
             "angularaxis": {
                 "rotation": 90,
@@ -141,8 +179,13 @@ def build_sky_plot_figure(
                 "tickmode": "array",
                 "tickvals": [0, 90, 180, 270],
                 "ticktext": ["N", "E", "S", "W"],
+                "gridcolor": THEME_BORDER_COLOR,
+                "linecolor": THEME_BORDER_COLOR,
+                "color": THEME_TEXT_COLOR,
             },
         },
+        paper_bgcolor=THEME_BACKGROUND_COLOR,
+        font={"color": THEME_TEXT_COLOR},
         showlegend=True,
         margin={"l": 30, "r": 30, "t": 30, "b": 30},
     )

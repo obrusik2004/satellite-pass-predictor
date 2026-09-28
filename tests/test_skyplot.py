@@ -15,10 +15,12 @@ import numpy as np
 import pytest
 from skyfield.timelib import Timescale
 
-from satellite_pass_predictor.config import KOUROU
+from satellite_pass_predictor.config import KOUROU, SATELLITE_COLORS
 from satellite_pass_predictor.skyplot import SKY_PLOT_STEP_SECONDS, build_sky_plot_figure
 from satellite_pass_predictor.time_utils import build_time_grid
 from satellite_pass_predictor.visibility import PassDict, compute_altaz, compute_passes
+
+_ISS_NAME = "ISS (ZARYA)"
 
 
 def _a_real_pass_with_some_duration(ts: Timescale, iss_satellite) -> PassDict:
@@ -42,6 +44,23 @@ def _marker_traces(fig):
     return [tr for tr in fig.data if tr.mode == "markers"]
 
 
+def test_track_color_comes_from_the_shared_satellite_color_mapping(
+    ts: Timescale, iss_satellite
+) -> None:
+    """
+    The pass track's line color should be exactly
+    config.SATELLITE_COLORS[satellite_name] -- the same mapping the
+    globe, passes table, and matplotlib figure all read -- not a fixed
+    module-level default, so this satellite's color is identical
+    everywhere this app draws it.
+    """
+    pass_ = _a_real_pass_with_some_duration(ts, iss_satellite)
+
+    fig = build_sky_plot_figure(iss_satellite, pass_, KOUROU, ts, _ISS_NAME)
+
+    assert _line_trace(fig).line.color == SATELLITE_COLORS[_ISS_NAME]
+
+
 def test_radius_is_90_minus_elevation_and_zenith_maps_to_plot_center(
     ts: Timescale, iss_satellite
 ) -> None:
@@ -54,7 +73,7 @@ def test_radius_is_90_minus_elevation_and_zenith_maps_to_plot_center(
     """
     pass_ = _a_real_pass_with_some_duration(ts, iss_satellite)
 
-    fig = build_sky_plot_figure(iss_satellite, pass_, KOUROU, ts)
+    fig = build_sky_plot_figure(iss_satellite, pass_, KOUROU, ts, _ISS_NAME)
 
     # Recomputed independently, over the same window/step, rather than
     # trusting build_sky_plot_figure()'s own internals -- same geometry,
@@ -86,7 +105,7 @@ def test_radial_axis_spans_horizon_to_zenith_with_inverted_labels(
     radius 0 (the center), 0 deg (horizon) at radius 90 (the edge)."""
     pass_ = _a_real_pass_with_some_duration(ts, iss_satellite)
 
-    fig = build_sky_plot_figure(iss_satellite, pass_, KOUROU, ts)
+    fig = build_sky_plot_figure(iss_satellite, pass_, KOUROU, ts, _ISS_NAME)
 
     radial = fig.layout.polar.radialaxis
     assert tuple(radial.range) == (0, 90)
@@ -104,7 +123,7 @@ def test_angular_axis_uses_compass_convention_not_math_convention(
     """
     pass_ = _a_real_pass_with_some_duration(ts, iss_satellite)
 
-    fig = build_sky_plot_figure(iss_satellite, pass_, KOUROU, ts)
+    fig = build_sky_plot_figure(iss_satellite, pass_, KOUROU, ts, _ISS_NAME)
 
     angular = fig.layout.polar.angularaxis
     assert angular.rotation == 90
@@ -116,21 +135,23 @@ def test_angular_axis_uses_compass_convention_not_math_convention(
 def test_rise_and_set_markers_present_distinct_and_at_pass_endpoints(
     ts: Timescale, iss_satellite
 ) -> None:
-    """Two marker traces, visually distinct from each other, positioned
-    at the pass's own recorded start/end azimuth -- so the direction of
-    travel across the sky is clear even without reading the line."""
+    """Two marker traces, labeled with standard ground-station terms
+    (AOS/LOS) and visually distinct from each other by shape (not
+    color -- see _RISE_COLOR/_SET_COLOR's own comment for why they're
+    neutral rather than a fixed green/red), positioned at the pass's own
+    recorded start/end azimuth -- so the direction of travel across the
+    sky is clear even without reading the line."""
     pass_ = _a_real_pass_with_some_duration(ts, iss_satellite)
 
-    fig = build_sky_plot_figure(iss_satellite, pass_, KOUROU, ts)
+    fig = build_sky_plot_figure(iss_satellite, pass_, KOUROU, ts, _ISS_NAME)
 
     markers = _marker_traces(fig)
     assert len(markers) == 2
     names = {tr.name for tr in markers}
-    assert names == {"Rise", "Set"}
+    assert names == {"AOS (rise)", "LOS (set)"}
 
-    rise = next(tr for tr in markers if tr.name == "Rise")
-    set_ = next(tr for tr in markers if tr.name == "Set")
-    assert rise.marker.color != set_.marker.color
+    rise = next(tr for tr in markers if tr.name == "AOS (rise)")
+    set_ = next(tr for tr in markers if tr.name == "LOS (set)")
     assert rise.marker.symbol != set_.marker.symbol
     assert rise.theta[0] == pytest.approx(pass_["start_azimuth_deg"])
     assert set_.theta[0] == pytest.approx(pass_["end_azimuth_deg"])
@@ -149,6 +170,6 @@ def test_recomputes_at_finer_resolution_than_the_tables_one_minute_grid(
     pass_ = _a_real_pass_with_some_duration(ts, iss_satellite)
     coarse_sample_count = int(pass_["duration_minutes"]) + 1  # what a 1-min grid would give
 
-    fig = build_sky_plot_figure(iss_satellite, pass_, KOUROU, ts)
+    fig = build_sky_plot_figure(iss_satellite, pass_, KOUROU, ts, _ISS_NAME)
 
     assert len(_line_trace(fig).r) > coarse_sample_count

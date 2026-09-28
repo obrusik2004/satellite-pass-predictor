@@ -37,6 +37,57 @@ SATELLITES: dict[str, int] = {
     "MICROSCOPE": 41457,
 }
 
+# Per-satellite display color -- the single source of truth every
+# renderer that draws a satellite reads from (globe.py's pydeck tracks/
+# markers, visualization.py's matplotlib ground-track figure,
+# skyplot.py's sky track, and app.py's passes table/legend), so the same
+# satellite can never show up in a different color in one view than
+# another. Hex strings: matplotlib and Plotly both take them directly;
+# globe.py and reporting.py convert to RGB where they need it (pydeck
+# layers want [r, g, b] triplets, the HTML report wants an rgba() value)
+# via the shared colors.hex_to_rgb() helper, rather than this module
+# keeping several parallel color representations.
+#
+# Sampled directly from esa.int, alongside the rest of the ESA-inspired
+# palette below ("Visual theme") -- not an arbitrary color-cycle pick.
+SATELLITE_COLORS: dict[str, str] = {
+    "ISS (ZARYA)": "#F1666A",
+    "SWISSCUBE": "#6DCFF6",
+    "BEESAT-1": "#76C8AE",
+    "MICROSCOPE": "#FFCC4E",
+}
+
+# Visual theme -- an ESA-inspired (esa.int) dark navy palette, used by
+# the Streamlit app. Deliberately inspired by, not a copy of, ESA's own
+# branding: no logo, no "ESA" name/wordmark anywhere (see README).
+#
+# The *same* values are also set in .streamlit/config.toml, which
+# Streamlit itself reads for almost all theming (backgrounds, borders,
+# fonts, widget colors). These Python constants exist only for the two
+# renderers config.toml can't reach: globe.py's pydeck layers (pydeck
+# renders in its own canvas/iframe with no access to the page's theme)
+# and visualization.py's matplotlib figure (also used standalone by
+# main.py/the CLI and reporting.py's HTML report, entirely outside
+# Streamlit). Kept in sync with config.toml by hand -- there's no single
+# file both a TOML parser and Python code can read.
+THEME_BACKGROUND_COLOR: str = "#0B1D26"  # page background
+THEME_PANEL_COLOR: str = "#003247"  # header bar / sidebar
+THEME_BORDER_COLOR: str = "#335E6F"  # dividers / borders
+
+# Light text color for both backgrounds above -- checked directly
+# (WCAG contrast ratios computed, not eyeballed), not assumed readable
+# just because it's light-on-dark: 15.2:1 against THEME_BACKGROUND_COLOR
+# and 12.0:1 against THEME_PANEL_COLOR, both far past the 4.5:1 WCAG AA
+# minimum for body text.
+THEME_TEXT_COLOR: str = "#EAF2F5"
+
+# Ground station marker on the globe -- white, not the gold an earlier
+# version of this app used: gold/yellow is now MICROSCOPE's own color
+# (SATELLITE_COLORS above), and Kourou is a ground station, not a
+# satellite, so it needs a color that can't be mistaken for either a
+# satellite track or a selection highlight.
+KOUROU_MARKER_COLOR: str = "#FFFFFF"
+
 CELESTRAK_URL: str = (
     "https://celestrak.org/NORAD/elements/gp.php"
     "?CATNR={norad_id}&FORMAT=TLE"
@@ -190,3 +241,14 @@ MIN_PASS_ELEVATION_DEG: float = 10.0
 # resolved only to within one sampling step, since we don't know what
 # happened *between* samples -- see find_passes() for how this is used.
 MIN_PASS_SAMPLES_FOR_CONFIDENCE: int = 3
+
+# Attribution shown in the Streamlit app's sidebar footer (app.py).
+# Fixed, literal constants -- never derived from any request, session,
+# or other runtime input -- specifically because app.py renders them
+# into raw HTML via unsafe_allow_html=True: that's only safe when
+# everything going into it is a constant like these, not something a
+# user could ever influence.
+AUTHOR_NAME: str = "Aleksander Bruski"
+GITHUB_REPO_URL: str = "https://github.com/obrusik2004/satellite-pass-predictor"
+LINKEDIN_URL: str = "https://www.linkedin.com/in/aleksander-bruski-b47aa638a/"
+COPYRIGHT_YEAR: int = 2026

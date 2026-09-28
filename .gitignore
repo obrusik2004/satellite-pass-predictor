@@ -222,3 +222,6 @@ data/
 
 # Generated plots (reproducible from main.py -- not source, see step 3 discussion)
 output/
+
+# Claude Code's local dev-server launch config (preview-only, machine-specific)
+.claude/

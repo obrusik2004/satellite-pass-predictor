@@ -18,11 +18,16 @@ import os
 
 from skyfield.timelib import Time
 
+from .colors import hex_to_rgb
 from .config import (
     KOUROU_LATITUDE_DEG,
     KOUROU_LONGITUDE_DEG,
     MIN_PASS_ELEVATION_DEG,
     OUTPUT_DIR,
+    THEME_BACKGROUND_COLOR,
+    THEME_BORDER_COLOR,
+    THEME_PANEL_COLOR,
+    THEME_TEXT_COLOR,
 )
 from .visibility import PassDict
 from .visualization import PASS_TABLE_COLUMNS, build_pass_rows
@@ -35,16 +40,38 @@ from .visualization import PASS_TABLE_COLUMNS, build_pass_rows
 # spreadsheet would.
 _NUMERIC_COLUMNS = {"start_az", "max_elev", "end_az", "duration_min"}
 
-_CSS = """
-  :root {
-    --bg: #f5f6f8;
-    --card-bg: #ffffff;
-    --text: #1a1a2e;
-    --muted: #63707e;
-    --border: #e2e5ea;
-    --accent: #2563eb;
-    --stripe: #f7f9fb;
-  }
+# "r, g, b" (no rgb()/parens) so it can be dropped straight into an
+# rgba(...) CSS value below, for the one color (--muted) that needs
+# translucency rather than a flat hex -- CSS custom properties can't be
+# partially substituted into another color function otherwise.
+_TEXT_RGB = ", ".join(str(c) for c in hex_to_rgb(THEME_TEXT_COLOR))
+
+# Same ESA-inspired dark navy theme as the Streamlit app (config.py's
+# THEME_* constants, also set in .streamlit/config.toml) -- restyled
+# from an earlier light theme after build_ground_tracks_figure() (the
+# embedded ground-track plot) switched to a dark background for its own
+# contrast reasons (see that function's docstring): a dark plot dropped
+# into a light report card looked like a rendering mistake, not a
+# deliberate design. This keeps the report visually consistent with the
+# rest of the project rather than the accident of "whichever theme this
+# file happened to be written in first."
+# A separate f-string for just the :root variables block, concatenated
+# with the plain (non-f) rest of the stylesheet below -- an f-string
+# covering the *whole* stylesheet would require escaping every single
+# `{`/`}` in every ordinary CSS rule (there are dozens) as `{{`/`}}`, for
+# no benefit: only :root's declarations actually need substitution.
+_ROOT_VARS = f"""
+  :root {{
+    --bg: {THEME_BACKGROUND_COLOR};
+    --card-bg: {THEME_PANEL_COLOR};
+    --text: {THEME_TEXT_COLOR};
+    --muted: rgba({_TEXT_RGB}, 0.65);
+    --border: {THEME_BORDER_COLOR};
+    --stripe: rgba({_TEXT_RGB}, 0.04);
+  }}
+"""
+
+_CSS = _ROOT_VARS + """
   * { box-sizing: border-box; }
   body {
     margin: 0;

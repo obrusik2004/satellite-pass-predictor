@@ -39,8 +39,89 @@ import numpy as np
 import pydeck as pdk
 from numpy.typing import NDArray
 
-from .config import KOUROU_ELEVATION_M, KOUROU_LATITUDE_DEG, KOUROU_LONGITUDE_DEG
+from .colors import hex_to_rgb
+from .config import (
+    KOUROU_ELEVATION_M,
+    KOUROU_LATITUDE_DEG,
+    KOUROU_LONGITUDE_DEG,
+    KOUROU_MARKER_COLOR,
+    SATELLITE_COLORS,
+    THEME_BACKGROUND_COLOR,
+    THEME_BORDER_COLOR,
+    THEME_PANEL_COLOR,
+)
+from .geo import find_antimeridian_crossings
 from .propagation import GroundTrackDict
+
+
+def _split_path_at_antimeridian(
+    longitudes: NDArray[np.float64], latitudes: NDArray[np.float64]
+) -> list[list[list[float]]]:
+    """
+    Split one satellite's ground track into separate [lon, lat] sub-paths
+    at every +-180 degree antimeridian crossing (see build_globe_deck()'s
+    docstring for why pydeck's PathLayer needs this, confirmed directly
+    by observation, unlike the point-to-point great-circle case it does
+    handle correctly on its own).
+
+    Each crossing's own two resulting sub-paths are extended with an
+    interpolated point placed exactly on the boundary they were cut at
+    (linearly interpolating latitude between the two original straddling
+    samples, at the fraction of the segment where longitude actually
+    reaches 180 degrees) so the split doesn't leave a visible gap at the
+    meridian -- the track still looks continuous, just correctly drawn
+    on both sides instead of wrapping the long way round through the
+    globe's other hemisphere.
+
+    Returns a list of sub-paths (each a list of [lon, lat] pairs) -- one
+    entry if the track never crosses the antimeridian, more if it does
+    (a satellite can cross it more than once within one globe window).
+    """
+    longitudes = np.asarray(longitudes, dtype=float)
+    latitudes = np.asarray(latitudes, dtype=float)
+    crossings = find_antimeridian_crossings(longitudes)
+    if len(crossings) == 0:
+        return [[[float(lo), float(la)] for lo, la in zip(longitudes, latitudes)]]
+
+    # For each crossing, the exact boundary longitude (+180 or -180,
+    # whichever side the track is moving *towards*) and the latitude at
+    # that exact crossing point, linearly interpolated between the two
+    # straddling samples. `unwrapped_lon1` re-expresses the far sample's
+    # longitude as a continuous (not wrapped-around) value relative to
+    # the near one -- e.g. 179 -> -179 becomes 179 -> 181 -- so the
+    # fraction-of-segment calculation (`t`) below is a plain linear
+    # interpolation rather than needing its own wraparound-aware case.
+    boundaries: list[tuple[float, float]] = []  # (signed boundary longitude, crossing latitude)
+    for i in crossings:
+        lon0, lon1 = float(longitudes[i]), float(longitudes[i + 1])
+        lat0, lat1 = float(latitudes[i]), float(latitudes[i + 1])
+        delta = lon1 - lon0
+        unwrapped_lon1 = lon1 - 360.0 * round(delta / 360.0)
+        unwrapped_delta = unwrapped_lon1 - lon0
+        boundary_lon = 180.0 if unwrapped_delta > 0 else -180.0
+        t = (boundary_lon - lon0) / unwrapped_delta
+        boundaries.append((boundary_lon, lat0 + t * (lat1 - lat0)))
+
+    segment_bounds = [0, *(int(i) + 1 for i in crossings), len(longitudes)]
+    paths: list[list[list[float]]] = []
+    for j in range(len(segment_bounds) - 1):
+        lo_slice = longitudes[segment_bounds[j]:segment_bounds[j + 1]]
+        la_slice = latitudes[segment_bounds[j]:segment_bounds[j + 1]]
+        path = [[float(lo), float(la)] for lo, la in zip(lo_slice, la_slice)]
+        if j > 0:
+            # This segment starts right after a crossing -- prepend the
+            # same crossing's interpolated point, on the *opposite* side
+            # of the meridian from where the previous segment ended.
+            prev_boundary_lon, prev_lat = boundaries[j - 1]
+            path.insert(0, [-prev_boundary_lon, prev_lat])
+        if j < len(boundaries):
+            # This segment ends right before a crossing -- append that
+            # crossing's interpolated point on this segment's own side.
+            boundary_lon, lat = boundaries[j]
+            path.append([boundary_lon, lat])
+        paths.append(path)
+    return paths
+
 
 # Land outlines for visual reference on the globe -- otherwise it's just
 # lines and a marker floating on a plain sphere, with nothing to anchor
@@ -70,32 +151,37 @@ _WORLD_LAND_GEOJSON: dict[str, Any] = json.loads(
 # build_globe_deck()'s docstring) and filled reads immediately as "this
 # is Earth" at a glance, which more directly solves the stated problem,
 # while a muted, desaturated color keeps it clearly secondary to the
-# satellite tracks -- confirmed by looking at it against Streamlit's
-# near-black dark theme (background ~rgb(14,17,23)): distinctly visible
-# without approaching the saturation of any satellite color or Kourou's
-# gold.
-_LAND_FILL_COLOR = [30, 38, 50]
-_LAND_BORDER_COLOR = [90, 105, 130]
+# satellite tracks. Reuses the app's own theme colors (THEME_PANEL_COLOR
+# for the fill, THEME_BORDER_COLOR for the coastline) rather than a
+# one-off palette, so the basemap sits visually "in" the ESA-inspired
+# theme instead of being colored independently of it -- checked directly
+# against THEME_BACKGROUND_COLOR: distinctly visible (contrast ratio
+# ~1.27:1, matching this same subtle-but-visible relationship the
+# original arbitrary colors had against Streamlit's old default dark
+# theme) without approaching the saturation of any satellite color or
+# Kourou's white marker.
+_LAND_FILL_COLOR = hex_to_rgb(THEME_PANEL_COLOR)
+_LAND_BORDER_COLOR = hex_to_rgb(THEME_BORDER_COLOR)
 _LAND_BORDER_WIDTH_PIXELS = 1
 
-# Matches matplotlib's default color cycle (the first entries of
-# "tab10"), so a satellite's color is at least consistent between this
-# globe and the 2D matplotlib plot the CLI/HTML report still use --
-# not required, but easy, and there's no reason to gratuitously clash.
-# pydeck wants plain [r, g, b] triplets, not hex strings.
-_SATELLITE_COLORS = [
-    [31, 119, 180], [255, 127, 14], [44, 160, 44], [214, 39, 40],
-    [148, 103, 189], [140, 86, 75], [227, 119, 194], [127, 127, 127],
-]
-
-# Kourou is the ground station, not a satellite -- gold, larger, and
-# outlined in black, distinct from every satellite color above by both
-# color and treatment (pydeck's ScatterplotLayer only draws circles, so
-# "symbol" here means size + stroke rather than a literal star shape;
-# see build_globe_deck()'s docstring for why that's an acceptable
-# trade-off rather than something worth chasing an IconLayer for).
-_KOUROU_COLOR = [255, 215, 0]
+# Kourou is the ground station, not a satellite -- white, larger, and
+# outlined in black, distinct from every satellite color (config.
+# SATELLITE_COLORS) by both color and treatment (pydeck's
+# ScatterplotLayer only draws circles, so "symbol" here means size +
+# stroke rather than a literal star shape; see build_globe_deck()'s
+# docstring for why that's an acceptable trade-off rather than something
+# worth chasing an IconLayer for).
+_KOUROU_COLOR = hex_to_rgb(KOUROU_MARKER_COLOR)
 _KOUROU_RADIUS_PIXELS = 10
+
+# The WebGL canvas's own clear color -- what shows through in the "void"
+# around the globe sphere (map_provider=None means there's no basemap
+# tile layer to fill it otherwise). Matched to THEME_BACKGROUND_COLOR so
+# the globe blends into the surrounding Streamlit page rather than
+# showing deck.gl's own default (a plain white/black rectangle) around
+# the sphere. Normalized to 0-1 (deck.gl's WebGL parameter convention),
+# not the 0-255 pydeck layer colors use elsewhere in this module.
+_CANVAS_CLEAR_COLOR = [c / 255.0 for c in hex_to_rgb(THEME_BACKGROUND_COLOR)] + [1.0]
 
 # Every satellite subpoint gets a line vertex (for a smooth-looking
 # track), but only every Nth one also gets a pickable hover point.
@@ -116,28 +202,31 @@ def build_globe_deck(ground_tracks: dict[str, GroundTrackDict]) -> pdk.Deck:
     thinned ScatterplotLayer per satellite for hover, and a distinct
     marker for the Kourou ground station.
 
-    Antimeridian handling, re-checked for this geometry rather than
-    assumed to carry over from visualization.py's flat matplotlib plot
-    (_split_at_antimeridian): that logic exists purely because a flat
-    lat/lon plot draws +180 and -180 degrees as two different edges of a
-    rectangle, so a track crossing between them jumps straight across
-    the image unless deliberately broken. On a true sphere there's no
-    such seam -- GlobeView converts each (lat, lon) sample to a 3D
-    position on the sphere's actual surface and interpolates along the
-    straight (short) 3D chord between consecutive points, not along a
-    2D lon/lat line, so a pair like 179 degrees and -179 degrees (2
-    degrees apart on the sphere) is never treated as being 358 degrees
-    apart. Verified this directly rather than trusting the theory alone:
-    fed the globe a path deliberately crossing the antimeridian and
-    checked the far/opposite hemisphere for a wrong-way line wrapping
-    all the way around the back -- there was none, confirming the short
-    path was taken. (There was a barely-visible cosmetic seam of a
-    couple of pixels exactly at the crossing vertex under an extreme,
-    artificial test at 5-degree point spacing and heavy zoom-in -- a
-    tessellation detail, not a wrong-direction line, and not something
-    real 1-minute-resolution satellite data is dense enough to make
-    visible in practice.) No antimeridian splitting is applied or
-    needed here.
+    Antimeridian handling: CONFIRMED needed, by direct observation in the
+    running app -- an earlier version of this docstring claimed pydeck's
+    GlobeView interpolates each PathLayer segment along the sphere's own
+    short 3D chord, making a break at +-180 degrees unnecessary (the way
+    it genuinely is unnecessary for the *point-to-point great-circle*
+    math). That claim doesn't hold for what PathLayer actually draws:
+    rotating the globe to the Pacific/New Zealand view showed every
+    satellite's track breaking at the 180 degree meridian with a
+    spurious straight line running along a constant latitude connecting
+    the two broken ends -- i.e. PathLayer was joining e.g. +179 and -179
+    degrees "the long way round" (through 0 degrees), the exact
+    wrong-direction streak a flat 2D plot would produce, not the short
+    hop across the seam. So this needs the same fix visualization.py's
+    flat matplotlib plot needs, just adapted to pydeck's data model:
+    pydeck's PathLayer has no NaN-break equivalent (unlike matplotlib),
+    so instead of inserting a break value, _split_path_at_antimeridian()
+    below splits one long path into multiple separate path entries in
+    the layer's `data` list at each crossing (found via the same
+    geo.find_antimeridian_crossings() visualization.py's own fix uses,
+    not a second, independently-written detector) -- and, so the two
+    resulting segments don't leave a visible gap at the meridian, each
+    one is extended with an interpolated point placed exactly on the
+    boundary it was cut at (+180 for the segment ending there, -180 for
+    the segment starting there, or vice versa depending on crossing
+    direction), at that crossing's own interpolated latitude.
 
     Rendering technology, verified rather than assumed: confirmed a
     real <canvas> element backed by an active WebGL2 context (not a 2D
@@ -178,12 +267,13 @@ def build_globe_deck(ground_tracks: dict[str, GroundTrackDict]) -> pdk.Deck:
     (_LAND_FILL_COLOR) keeps it clearly secondary to the satellite
     tracks rather than competing with them.
 
-    Color against Streamlit's dark theme -- also checked by looking,
-    not assumed: against the app's near-black background
-    (~rgb(14,17,23)), _LAND_FILL_COLOR reads as distinctly visible land
-    without approaching the saturation of any satellite color or
-    Kourou's gold, and _LAND_BORDER_COLOR gives coastlines a bit of
-    extra definition without standing out on its own.
+    Color against the app's theme -- also checked directly, not assumed:
+    _LAND_FILL_COLOR/_LAND_BORDER_COLOR now derive from the app's own
+    ESA-inspired theme colors (THEME_PANEL_COLOR/THEME_BORDER_COLOR, see
+    config.py) rather than a one-off palette, and read as distinctly
+    visible land against THEME_BACKGROUND_COLOR without approaching the
+    saturation of any satellite color or Kourou's white marker -- see
+    _LAND_FILL_COLOR's own comment for the actual contrast numbers.
 
     Performance impact -- re-measured with the same rAF-paced
     synthetic-drag methodology as the WebGL verification above, since a
@@ -224,8 +314,14 @@ def build_globe_deck(ground_tracks: dict[str, GroundTrackDict]) -> pdk.Deck:
         zoom=1.7, pitch=0,
     )
 
-    for i, (name, track) in enumerate(ground_tracks.items()):
-        color = _SATELLITE_COLORS[i % len(_SATELLITE_COLORS)]
+    for name, track in ground_tracks.items():
+        # Looked up by name (config.SATELLITE_COLORS), not by position in
+        # `ground_tracks` -- st.multiselect() (app.py) can return
+        # satellites in whatever order the user selected them in, and a
+        # positional/index-based color would then reassign a satellite's
+        # color every time the selection order changed, which is exactly
+        # what a single shared color mapping is meant to prevent.
+        color = hex_to_rgb(SATELLITE_COLORS[name])
         # track's lat/lon/alt fields are typed float | NDArray (see
         # propagation.FloatOrArray) since get_subpoint() can also be
         # called with a scalar time -- but compute_ground_track() always
@@ -244,16 +340,32 @@ def build_globe_deck(ground_tracks: dict[str, GroundTrackDict]) -> pdk.Deck:
 
         layers.append(pdk.Layer(
             "PathLayer",
-            data=[{
-                "path": [[float(lo), float(la)] for lo, la in zip(longitude_deg, latitude_deg)],
-                "color": color,
-            }],
+            # One "path" entry per antimeridian-free sub-path (usually
+            # just one) rather than a single entry spanning the whole
+            # track -- see _split_path_at_antimeridian() and this
+            # function's own docstring for why a single entry draws a
+            # spurious wrong-direction line at a +-180 degree crossing.
+            data=[
+                {"path": sub_path, "color": color}
+                for sub_path in _split_path_at_antimeridian(longitude_deg, latitude_deg)
+            ],
             get_path="path",
             get_color="color",
             get_width=15000,
             pickable=False,
         ))
 
+        # Deliberately built from the original, unsplit longitude_deg/
+        # latitude_deg arrays, not from _split_path_at_antimeridian()'s
+        # output: ScatterplotLayer draws independent points, never lines
+        # between them, so there's no "wrong direction" to draw at a
+        # crossing the way PathLayer has -- a hover point at +179.7 next
+        # to one at -179.7 is just two correctly-placed points, not a
+        # rendering bug. Using the split output here would also require
+        # fabricating hover data (time/altitude) for the synthetic
+        # interpolated boundary points _split_path_at_antimeridian() adds
+        # for PathLayer's benefit, which don't correspond to a real
+        # sample at all.
         hover_points = [
             {
                 "name": name,
@@ -311,6 +423,7 @@ def build_globe_deck(ground_tracks: dict[str, GroundTrackDict]) -> pdk.Deck:
         initial_view_state=view_state,
         views=[pdk.View(type="_GlobeView", controller=True)],
         map_provider=None,
+        parameters={"clearColor": _CANVAS_CLEAR_COLOR},
         tooltip={
             "html": (
                 "<b>{name}</b><br/>{time}<br/>"

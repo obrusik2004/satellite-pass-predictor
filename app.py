@@ -9,9 +9,11 @@ package for that.
 Primary visualization is an interactive 3D-look globe (globe.py), built
 from the same GroundTrackDict data compute_ground_track() already
 produces -- not a duplicate computation. The 2D matplotlib plot
-(visualization.build_ground_tracks_figure()) is untouched and still used
-by main.py/the CLI and the static HTML report; it's just no longer what
-this app displays.
+(visualization.build_ground_tracks_figure()) is still used by main.py/
+the CLI and the static HTML report, not this app; it was recolored
+during this app's visual redesign purely to fix a contrast problem
+shared with this app's own palette (see that function's docstring), not
+because it's shown here.
 
 Everything here recomputes live on every widget interaction (Streamlit
 reruns this whole script top to bottom on every interaction; that's
@@ -21,17 +23,26 @@ report).
 
 from typing import cast
 
+import pandas as pd
 import streamlit as st
 from skyfield.api import load
 from skyfield.sgp4lib import EarthSatellite
 
 from satellite_pass_predictor.config import (
+    AUTHOR_NAME,
+    COPYRIGHT_YEAR,
+    GITHUB_REPO_URL,
     KOUROU,
     KOUROU_LATITUDE_DEG,
     KOUROU_LONGITUDE_DEG,
+    LINKEDIN_URL,
     MIN_PASS_ELEVATION_DEG,
     MIRROR_REFRESH_WARNING_HOURS,
+    SATELLITE_COLORS,
     SATELLITES,
+    THEME_BORDER_COLOR,
+    THEME_PANEL_COLOR,
+    THEME_TEXT_COLOR,
     TLE_EPOCH_WARNING_DAYS,
     TLE_MIRROR_CACHE_AGE_HOURS,
 )
@@ -54,6 +65,94 @@ from satellite_pass_predictor.visualization import (
 )
 
 st.set_page_config(page_title="Satellite Pass Predictor", layout="wide")
+
+# Minimal custom CSS -- the one place it's used in this app, for the
+# things .streamlit/config.toml's theme genuinely can't express: a
+# colored "title band" behind the header (Streamlit's theme has no
+# notion of a background scoped to one section of the page), small
+# color-swatch dots for the sidebar's satellite legend (no built-in
+# widget draws an arbitrary-colored dot), and trimming a few pieces of
+# native Streamlit sidebar chrome that reserve real but non-functional
+# vertical space (a sidebar's worth of controls plus the provenance/
+# footer text otherwise needs to scroll to see on a normal laptop
+# viewport). The first two target only classes defined right here
+# (pp-header, pp-legend-dot), never Streamlit's own internal, auto-
+# generated class names (the "st-emotion-cache-xxxx" kind that changes
+# across versions). The sidebar-chrome rules below are the one
+# exception: they target Streamlit's own data-testid attributes
+# (stSidebarHeader, stSidebarUserContent), which are that different,
+# more stable kind of hook -- Streamlit's own documented automation/
+# testing contract, not a build-generated hash -- because there's no
+# other way to reach chrome this app's own markup doesn't produce.
+st.markdown(
+    f"""
+    <style>
+    /* Measured directly (getComputedStyle() in the running app, not
+       guessed) before trimming any of this: stSidebarHeader reserved
+       60px for just the collapse arrow (this app sets no sidebar logo),
+       stSidebarUserContent reserved a 96px bottom padding, and each
+       st.divider() line's own default margin took ~49px total -- none
+       of that is functional, all of it is exactly the wasted space this
+       fixes. Deliberately NOT touching stSidebarUserContent's
+       inter-element gap (Streamlit's own default, 16px) -- that also
+       separates the legend's own rows, which must keep its current
+       look and spacing exactly as it was. */
+    [data-testid="stSidebarHeader"] {{
+        height: 2rem;
+    }}
+    [data-testid="stSidebarUserContent"] {{
+        padding-bottom: 0.5rem;
+    }}
+    [data-testid="stSidebar"] hr {{
+        margin: 0.4rem 0;
+    }}
+    .pp-header {{
+        background: {THEME_PANEL_COLOR};
+        border: 1px solid {THEME_BORDER_COLOR};
+        border-radius: 0.5rem;
+        padding: 1.1rem 1.75rem;
+        margin-bottom: 1.5rem;
+        /* Streamlit's own fixed top bar overlaps the very top of the
+           main content area -- confirmed directly (the header band's
+           top edge rendered underneath it without this). The
+           block-container's default top padding isn't reliably enough
+           clearance on its own, so this band gets its own explicit
+           margin rather than depending on that. client.toolbarMode =
+           "minimal" (.streamlit/config.toml) shrinks that top bar, but
+           doesn't remove it outright, so this margin stays regardless. */
+        margin-top: 2.5rem;
+    }}
+    .pp-header h1 {{
+        margin: 0 0 0.3rem 0;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+    }}
+    .pp-header p {{
+        margin: 0;
+        color: {THEME_TEXT_COLOR};
+        opacity: 0.75;
+        font-size: 0.95rem;
+    }}
+    .pp-legend-dot {{
+        display: inline-block;
+        width: 0.75em;
+        height: 0.75em;
+        border-radius: 50%;
+        margin-right: 0.45em;
+        vertical-align: middle;
+    }}
+    .pp-footer {{
+        font-size: 0.75rem;
+        line-height: 1.6;
+        opacity: 0.6;
+    }}
+    .pp-footer a {{
+        color: inherit;
+    }}
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 # The globe's *own* display window, independent of the "Time window"
 # slider below (which still controls the full pass-detection window).
@@ -126,26 +225,42 @@ def _load_mirror_metadata() -> TLEMirrorMetadata | None:
     return fetch_mirror_metadata()
 
 
-st.title("Satellite Pass Predictor")
-st.caption(
-    f"Kourou observer: {KOUROU_LATITUDE_DEG:.4f}°N, "
-    f"{abs(KOUROU_LONGITUDE_DEG):.4f}°W · "
-    f"elevation threshold {MIN_PASS_ELEVATION_DEG:.0f}°"
+# Title band -- .pp-header, styled above -- rather than plain st.title()/
+# st.caption(): the ESA-style "clean title band" called for here needs a
+# background distinct from the page, which st.title() has no option for.
+st.markdown(
+    f"""
+    <div class="pp-header">
+      <h1>Satellite Pass Predictor</h1>
+      <p>
+        Kourou observer: {KOUROU_LATITUDE_DEG:.4f}°N,
+        {abs(KOUROU_LONGITUDE_DEG):.4f}°W ·
+        elevation threshold {MIN_PASS_ELEVATION_DEG:.0f}°
+      </p>
+    </div>
+    """,
+    unsafe_allow_html=True,
 )
 
+# Controls live in the sidebar (rather than the main area, as in an
+# earlier version of this app) so the main area is dedicated entirely to
+# the globe/table/sky-plot output -- standard dashboard layout, and it's
+# also where the satellite color legend and data-provenance details
+# below naturally belong alongside these same controls.
 satellite_names = list(SATELLITES.keys())
-selected_names = st.multiselect(
-    "Satellites", options=satellite_names, default=satellite_names,
-)
+with st.sidebar:
+    selected_names = st.multiselect(
+        "Satellites", options=satellite_names, default=satellite_names,
+    )
 
-duration_hours = st.slider(
-    "Time window (hours)", min_value=1, max_value=72, value=24,
-    help=(
-        "How far ahead to compute visibility passes. The globe below "
-        f"shows at most the next {GLOBE_MAX_DURATION_HOURS}h regardless "
-        "of this setting -- see the note above the globe."
-    ),
-)
+    duration_hours = st.slider(
+        "Time window (hours)", min_value=1, max_value=72, value=24,
+        help=(
+            "How far ahead to compute visibility passes. The globe below "
+            f"shows at most the next {GLOBE_MAX_DURATION_HOURS}h regardless "
+            "of this setting -- see the note above the globe."
+        ),
+    )
 
 if not selected_names:
     st.info("Select at least one satellite to see its ground track and passes.")
@@ -153,6 +268,19 @@ if not selected_names:
 
 all_satellites = _load_all_satellites()
 satellites = {name: all_satellites[name] for name in selected_names}
+
+with st.sidebar:
+    # Color legend -- exact hex swatches (config.SATELLITE_COLORS), so
+    # the globe's per-satellite track colors are self-explanatory without
+    # needing to guess or hover. Only for currently-selected satellites,
+    # matching what's actually drawn below.
+    st.markdown("**Satellites shown**")
+    for name in selected_names:
+        st.markdown(
+            f'<span class="pp-legend-dot" style="background: {SATELLITE_COLORS[name]};">'
+            f"</span>{name}",
+            unsafe_allow_html=True,
+        )
 
 ts = load.timescale()
 now = ts.now()
@@ -167,27 +295,59 @@ mirror_metadata = _load_mirror_metadata()
 satellite_epochs = {name: sat.epoch.utc_datetime() for name, sat in satellites.items()}
 staleness = compute_staleness_warnings(mirror_metadata, satellite_epochs)
 
-if mirror_metadata is None:
-    # fetch_mirror_metadata() already degrades to None for any problem
-    # (network failure, missing branch, malformed JSON) rather than
-    # raising -- the TLEs themselves already loaded fine above (or
-    # load_satellites() would have raised), so this is purely "we can't
-    # show provenance details right now," not a reason to stop.
-    st.caption("TLEs from Celestrak via GitHub mirror -- refresh provenance unavailable right now.")
-else:
-    generated_at = parse_iso_utc(mirror_metadata["generated_at"])
-    generated_at_str = (
-        generated_at.strftime("%Y-%m-%d %H:%M UTC") if generated_at is not None
-        else mirror_metadata["generated_at"]  # malformed timestamp -- show it raw rather than hide it
+# Small and muted, at the bottom of the sidebar -- provenance detail
+# worth having available, not something that needs main-area prominence
+# on every rerun the way an actual staleness problem (below) does.
+with st.sidebar:
+    st.divider()
+    if mirror_metadata is None:
+        # fetch_mirror_metadata() already degrades to None for any problem
+        # (network failure, missing branch, malformed JSON) rather than
+        # raising -- the TLEs themselves already loaded fine above (or
+        # load_satellites() would have raised), so this is purely "we
+        # can't show provenance details right now," not a reason to stop.
+        st.caption("TLEs from Celestrak via GitHub mirror -- refresh provenance unavailable right now.")
+    else:
+        generated_at = parse_iso_utc(mirror_metadata["generated_at"])
+        generated_at_str = (
+            generated_at.strftime("%Y-%m-%d %H:%M UTC") if generated_at is not None
+            else mirror_metadata["generated_at"]  # malformed timestamp -- show it raw rather than hide it
+        )
+        st.caption(f"TLEs from Celestrak via GitHub mirror, last refreshed {generated_at_str}")
+
+    epoch_ages = ", ".join(
+        f"{name} {(now.utc_datetime() - epoch).total_seconds() / 86400:.1f}d"
+        for name, epoch in satellite_epochs.items()
     )
-    st.caption(f"TLEs from Celestrak via GitHub mirror, last refreshed {generated_at_str}")
+    st.caption(f"TLE epoch age -- {epoch_ages}")
 
-epoch_ages = ", ".join(
-    f"{name} {(now.utc_datetime() - epoch).total_seconds() / 86400:.1f}d"
-    for name, epoch in satellite_epochs.items()
-)
-st.caption(f"TLE epoch age -- {epoch_ages}")
+    # Footer -- every value here is a literal constant from config.py
+    # (AUTHOR_NAME, GITHUB_REPO_URL, LINKEDIN_URL, COPYRIGHT_YEAR), never
+    # anything from a request, session, or other runtime input; that's
+    # what makes rendering it as raw HTML via unsafe_allow_html safe (see
+    # those constants' own comment in config.py). The LinkedIn link is
+    # only included while LINKEDIN_URL is actually set, rather than
+    # rendering a broken href, though in practice it always is now.
+    footer_links = [f'<a href="{GITHUB_REPO_URL}" target="_blank">GitHub</a>']
+    if LINKEDIN_URL:
+        footer_links.append(f'<a href="{LINKEDIN_URL}" target="_blank">LinkedIn</a>')
+    st.divider()
+    st.markdown(
+        f"""
+        <div class="pp-footer">
+          Built by {AUTHOR_NAME} &middot; {" &middot; ".join(footer_links)}<br>
+          Orbital data: CelesTrak &middot; Basemap: Natural Earth<br>
+          Independent project, not affiliated with ESA<br>
+          &copy; {COPYRIGHT_YEAR} {AUTHOR_NAME}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
+# Staleness warnings stay in the main area (not the sidebar) -- unlike
+# the routine provenance captions above, these mean something is
+# actually wrong and should be hard to miss, not tucked away below the
+# fold in a panel the user might not scroll.
 if staleness["mirror_stale"]:
     st.warning(
         f"The TLE mirror hasn't refreshed in over {MIRROR_REFRESH_WARNING_HOURS:.0f}h -- "
@@ -282,8 +442,26 @@ else:
     # 280-400px-wide column of full sentences did. Once the column's
     # own content is short, the redistribution "penalty" stops being
     # visually distinguishable from ordinary column padding.
+    # Colored via a pandas Styler, not column_config -- checked directly
+    # against this pinned streamlit==1.64.0's column_types.py, and no
+    # column type there renders per-cell color in the grid itself
+    # (MarkdownColumn only renders markdown in a click-to-expand overlay,
+    # not inline -- see that type's own docstring). Styler.map's per-cell
+    # CSS *is* rendered inline in the grid (confirmed against
+    # elements/lib/pandas_styler_utils.py: it's translated to real CSS
+    # rules keyed by row/col, independent of on_select's own row/column
+    # selection state) -- so this gives the exact SATELLITE_COLORS hex
+    # value per row, not an approximate stand-in like an emoji. Colors
+    # only the "Satellite" column's text; every other column is
+    # untouched. Selection (on_select="rerun" + key="passes_table" below)
+    # was verified by hand to still work with a Styler passed as `data`
+    # -- clicking a row still selects it and still drives the sky plot.
+    styled_rows = pd.DataFrame(display_rows).style.map(
+        lambda satellite_name: f"color: {SATELLITE_COLORS[satellite_name]}; font-weight: 600",
+        subset=["Satellite"],
+    )
     event = st.dataframe(
-        display_rows, width="stretch", hide_index=True,
+        styled_rows, width="stretch", hide_index=True,
         on_select="rerun", selection_mode="single-row", key="passes_table",
         column_config={"Notes": st.column_config.TextColumn(
             # "small", one of column_config's three named width presets
@@ -340,5 +518,5 @@ else:
         selected_row = rows[selected[0]]
         satellite_name = cast(str, selected_row["_satellite"])
         pass_ = cast(PassDict, selected_row["_pass"])
-        fig = build_sky_plot_figure(satellites[satellite_name], pass_, KOUROU, ts)
+        fig = build_sky_plot_figure(satellites[satellite_name], pass_, KOUROU, ts, satellite_name)
         st.plotly_chart(fig, use_container_width=True)

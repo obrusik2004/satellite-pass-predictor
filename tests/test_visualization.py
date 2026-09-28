@@ -21,8 +21,10 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pytest
+from matplotlib.colors import to_rgb
 from skyfield.timelib import Timescale
 
+from satellite_pass_predictor.config import SATELLITE_COLORS, THEME_BACKGROUND_COLOR
 from satellite_pass_predictor.visibility import PassDict
 from satellite_pass_predictor.visualization import (
     NOTE_CODE_LEGEND,
@@ -232,3 +234,41 @@ def test_build_ground_tracks_figure_returns_a_live_unclosed_figure(
     assert len(fig.axes) == 1
     assert len(fig.axes[0].lines) == len(satellites)
     plt.close(fig)  # clean up -- this test intentionally doesn't call plot_ground_tracks()
+
+
+def test_each_satellites_line_uses_its_config_color(ts: Timescale, iss_satellite) -> None:
+    """Each satellite's plotted line should be exactly
+    config.SATELLITE_COLORS[name] -- the same mapping the globe, sky
+    plot, and passes table all read -- not matplotlib's own default
+    color cycle."""
+    t0 = ts.utc(2026, 9, 21, 0, 0, 0)
+    satellites = {"ISS (ZARYA)": iss_satellite}
+
+    fig = build_ground_tracks_figure(
+        satellites, ts, start_time=t0, duration_hours=1, step_minutes=30,
+    )
+
+    line = fig.axes[0].lines[0]
+    assert to_rgb(line.get_color()) == to_rgb(SATELLITE_COLORS["ISS (ZARYA)"])
+    plt.close(fig)
+
+
+def test_figure_and_axes_use_the_dark_theme_background(ts: Timescale, iss_satellite) -> None:
+    """
+    Checked directly (see build_ground_tracks_figure()'s own docstring
+    for the contrast numbers behind this): matplotlib's default white
+    background leaves two of the four SATELLITE_COLORS (light, pastel
+    colors) nearly unreadable, so the figure's background is set to the
+    app's own dark THEME_BACKGROUND_COLOR instead of left at the
+    (light) default.
+    """
+    t0 = ts.utc(2026, 9, 21, 0, 0, 0)
+    satellites = {"ISS (ZARYA)": iss_satellite}
+
+    fig = build_ground_tracks_figure(
+        satellites, ts, start_time=t0, duration_hours=1, step_minutes=30,
+    )
+
+    assert to_rgb(fig.get_facecolor()) == to_rgb(THEME_BACKGROUND_COLOR)
+    assert to_rgb(fig.axes[0].get_facecolor()) == to_rgb(THEME_BACKGROUND_COLOR)
+    plt.close(fig)

@@ -31,7 +31,14 @@ from numpy.typing import NDArray
 from skyfield.sgp4lib import EarthSatellite
 from skyfield.timelib import Time, Timescale
 
-from .config import OUTPUT_DIR
+from .config import (
+    OUTPUT_DIR,
+    SATELLITE_COLORS,
+    THEME_BACKGROUND_COLOR,
+    THEME_BORDER_COLOR,
+    THEME_TEXT_COLOR,
+)
+from .geo import find_antimeridian_crossings
 from .propagation import compute_ground_track
 from .visibility import PassDict
 
@@ -41,7 +48,11 @@ def _split_at_antimeridian(
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     """
     Insert NaN breaks wherever consecutive longitude samples jump across
-    the +180/-180 antimeridian (International Date Line).
+    the +180/-180 antimeridian (International Date Line) -- see
+    geo.find_antimeridian_crossings() for how a crossing is detected
+    (shared with globe.py's own antimeridian fix, which needs a
+    different consumption of the same crossing indices -- see that
+    module for why).
 
     A ground track crossing that line jumps from e.g. +179.9 deg to
     -179.9 deg between two adjacent samples that are actually right next
@@ -55,7 +66,7 @@ def _split_at_antimeridian(
     longitudes = np.asarray(longitudes, dtype=float)
     latitudes = np.asarray(latitudes, dtype=float)
 
-    jumps = np.where(np.abs(np.diff(longitudes)) > 180.0)[0]
+    jumps = find_antimeridian_crossings(longitudes)
     if len(jumps) == 0:
         return longitudes, latitudes
 
@@ -91,11 +102,28 @@ def build_ground_tracks_figure(
 
     All satellites share the same start_time so the tracks are directly
     comparable on one plot.
+
+    Dark theme (THEME_BACKGROUND_COLOR etc., see config.py), not
+    matplotlib's default white figure -- checked directly, not assumed:
+    two of the four SATELLITE_COLORS (SWISSCUBE's light blue, MICROSCOPE's
+    yellow) are pastel enough that on white they measure 1.5-1.8:1 WCAG
+    contrast, well under even the lenient 3:1 non-text minimum -- visibly
+    washed out, not just theoretically under-contrasted. Every satellite
+    color instead measures 5.6-11.5:1 against this dark background, so
+    the fix is the background (per this function's own docstring
+    guidance on this exact trade-off), not the fixed, exact-value
+    satellite palette. This is the one shared figure both the Streamlit
+    app and main.py/the CLI/reporting.py's (still light-themed) HTML
+    report use -- the dark output is a direct consequence of fixing this
+    contrast problem for every caller, not a change scoped to the
+    Streamlit app alone.
     """
     if start_time is None:
         start_time = ts.now()
 
     fig, ax = plt.subplots(figsize=(12, 6))
+    fig.patch.set_facecolor(THEME_BACKGROUND_COLOR)
+    ax.set_facecolor(THEME_BACKGROUND_COLOR)
 
     for name, sat in satellites.items():
         track = compute_ground_track(
@@ -109,21 +137,27 @@ def build_ground_tracks_figure(
         longitude_deg = cast(NDArray[np.float64], track["longitude_deg"])
         latitude_deg = cast(NDArray[np.float64], track["latitude_deg"])
         lon, lat = _split_at_antimeridian(longitude_deg, latitude_deg)
-        ax.plot(lon, lat, linewidth=1, label=name)
+        ax.plot(lon, lat, linewidth=1.5, label=name, color=SATELLITE_COLORS[name])
 
     ax.set_xlim(-180, 180)
     ax.set_ylim(-90, 90)
     ax.set_xticks(np.arange(-180, 181, 30))
     ax.set_yticks(np.arange(-90, 91, 30))
-    ax.grid(True, linestyle="--", linewidth=0.5, alpha=0.6)
-    ax.set_xlabel("Longitude (deg)")
-    ax.set_ylabel("Latitude (deg)")
+    ax.grid(True, linestyle="--", linewidth=0.5, alpha=0.6, color=THEME_BORDER_COLOR)
+    ax.set_xlabel("Longitude (deg)", color=THEME_TEXT_COLOR)
+    ax.set_ylabel("Latitude (deg)", color=THEME_TEXT_COLOR)
     ax.set_title(
         "Ground tracks -- next {}h from {}".format(
             duration_hours, start_time.utc_strftime("%Y-%m-%d %H:%M UTC")
-        )
+        ),
+        color=THEME_TEXT_COLOR,
     )
-    ax.legend(loc="upper right", fontsize=8)
+    ax.tick_params(colors=THEME_TEXT_COLOR)
+    for spine in ax.spines.values():
+        spine.set_color(THEME_BORDER_COLOR)
+    legend = ax.legend(loc="upper right", fontsize=8, facecolor=THEME_BACKGROUND_COLOR, edgecolor=THEME_BORDER_COLOR)
+    for text in legend.get_texts():
+        text.set_color(THEME_TEXT_COLOR)
     fig.tight_layout()
 
     return fig
