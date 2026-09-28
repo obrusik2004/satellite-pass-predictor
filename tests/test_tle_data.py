@@ -395,3 +395,293 @@ def test_raises_value_error_when_fetched_response_has_no_usable_tle_data(
     message = str(exc_info.value)
     assert "TESTSAT" in message
     assert "99999" in message
+
+
+# ---------------------------------------------------------------------------
+# source="mirror": same machinery as source="celestrak" (default), but a
+# different URL template and a much shorter on-disk cache age -- see
+# TLE_MIRROR_URL/TLE_MIRROR_CACHE_AGE_HOURS's comments in config.py.
+# ---------------------------------------------------------------------------
+
+
+def test_default_source_is_celestrak(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """No `source` argument at all -- the existing call signature every
+    caller before this feature used -- should still hit Celestrak, not
+    the mirror."""
+    monkeypatch.setattr(tle_data, "TLE_CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(tle_data.load, "exists", lambda filename: False)
+    mock_get = MagicMock(return_value=_fake_response())
+    monkeypatch.setattr(tle_data.requests, "get", mock_get)
+
+    tle_data.load_satellites(FAKE_SATELLITES)
+
+    args, _ = mock_get.call_args
+    assert args[0] == tle_data.CELESTRAK_URL.format(norad_id=99999)
+
+
+def test_mirror_source_fetches_from_the_mirror_url(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(tle_data, "TLE_CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(tle_data.load, "exists", lambda filename: False)
+    mock_get = MagicMock(return_value=_fake_response())
+    monkeypatch.setattr(tle_data.requests, "get", mock_get)
+
+    result = tle_data.load_satellites(FAKE_SATELLITES, source="mirror")
+
+    assert result["TESTSAT"].name == "ISS (ZARYA)"
+    args, _ = mock_get.call_args
+    assert args[0] == tle_data.TLE_MIRROR_URL.format(norad_id=99999)
+
+
+def test_mirror_source_uses_its_own_much_shorter_cache_age(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """
+    A cache age exactly between the mirror's short threshold and
+    Celestrak's day-long one should be treated as fresh for "celestrak"
+    but stale for "mirror" -- proving the two sources genuinely use
+    different max ages, not just different URLs.
+    """
+    monkeypatch.setattr(tle_data, "TLE_CACHE_DIR", str(tmp_path))
+    between_the_two_thresholds = (
+        tle_data.TLE_MIRROR_CACHE_AGE_HOURS / 24.0 + tle_data.MAX_TLE_AGE_DAYS
+    ) / 2
+    monkeypatch.setattr(tle_data.load, "exists", lambda filename: True)
+    monkeypatch.setattr(tle_data.load, "days_old", lambda filename: between_the_two_thresholds)
+    mock_tle_file = MagicMock(return_value=["sentinel-satellite"])
+    monkeypatch.setattr(tle_data.load, "tle_file", mock_tle_file)
+    mock_get = MagicMock(return_value=_fake_response())
+    monkeypatch.setattr(tle_data.requests, "get", mock_get)
+
+    tle_data.load_satellites(FAKE_SATELLITES, source="celestrak")
+    mock_get.assert_not_called()  # fresh enough for Celestrak's own 1-day threshold
+
+    tle_data.load_satellites(FAKE_SATELLITES, source="mirror")
+    mock_get.assert_called_once()  # but stale for the mirror's own ~1h threshold
+
+
+def test_mirror_source_error_message_points_at_the_refresh_workflow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    An unreachable mirror with no local cache to fall back to (e.g. the
+    tle-data branch doesn't exist yet, or has never been reachable from
+    this machine) should tell the user to run the refresh workflow --
+    "check your internet connection" (the celestrak-source message)
+    would be actively misleading here.
+    """
+    monkeypatch.setattr(tle_data.load, "exists", lambda filename: False)
+    monkeypatch.setattr(tle_data.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(
+        tle_data.requests, "get",
+        MagicMock(side_effect=requests.ConnectionError("404 Not Found")),
+    )
+
+    with pytest.raises(OSError) as exc_info:
+        tle_data.load_satellites(FAKE_SATELLITES, source="mirror")
+
+    message = str(exc_info.value)
+    assert "TESTSAT" in message
+    assert "refresh-tles.yml" in message or "Refresh TLE mirror" in message
+    assert "check your internet connection" not in message.lower()
+
+
+# ---------------------------------------------------------------------------
+# is_older_than(): pure staleness logic, no network/Skyfield/Streamlit --
+# shared by app.py's mirror-refresh-age and TLE-epoch-age warnings.
+# ---------------------------------------------------------------------------
+
+
+def test_is_older_than_false_when_well_within_max_age() -> None:
+    now = tle_data.datetime(2026, 9, 28, 12, 0, 0, tzinfo=tle_data.timezone.utc)
+    reference_time = now - tle_data.timedelta(hours=1)
+
+    assert tle_data.is_older_than(reference_time, tle_data.timedelta(hours=24), now=now) is False
+
+
+def test_is_older_than_true_when_well_past_max_age() -> None:
+    now = tle_data.datetime(2026, 9, 28, 12, 0, 0, tzinfo=tle_data.timezone.utc)
+    reference_time = now - tle_data.timedelta(hours=48)
+
+    assert tle_data.is_older_than(reference_time, tle_data.timedelta(hours=24), now=now) is True
+
+
+def test_is_older_than_boundary_exactly_at_max_age_is_not_yet_stale() -> None:
+    """Exactly at the threshold should not (yet) count as stale -- the
+    comparison is a strict `>`, not `>=`."""
+    now = tle_data.datetime(2026, 9, 28, 12, 0, 0, tzinfo=tle_data.timezone.utc)
+    reference_time = now - tle_data.timedelta(hours=24)
+
+    assert tle_data.is_older_than(reference_time, tle_data.timedelta(hours=24), now=now) is False
+
+
+def test_is_older_than_boundary_one_second_past_max_age_is_stale() -> None:
+    now = tle_data.datetime(2026, 9, 28, 12, 0, 0, tzinfo=tle_data.timezone.utc)
+    reference_time = now - tle_data.timedelta(hours=24, seconds=1)
+
+    assert tle_data.is_older_than(reference_time, tle_data.timedelta(hours=24), now=now) is True
+
+
+def test_is_older_than_uses_the_real_current_time_when_now_not_given() -> None:
+    """Without an explicit `now`, this should compare against the actual
+    wall clock -- checked with a reference_time far enough in the past
+    that the result is unambiguous regardless of when the test runs."""
+    long_ago = tle_data.datetime(2000, 1, 1, tzinfo=tle_data.timezone.utc)
+
+    assert tle_data.is_older_than(long_ago, tle_data.timedelta(days=1)) is True
+
+
+# ---------------------------------------------------------------------------
+# fetch_mirror_metadata(): best-effort, never raises -- app.py's
+# provenance display must degrade gracefully, not break, if this is
+# unavailable or malformed.
+# ---------------------------------------------------------------------------
+
+
+def test_fetch_mirror_metadata_returns_parsed_data_on_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = {
+        "generated_at": "2026-09-28T09:00:00Z",
+        "satellites": {
+            "99999": {
+                "name": "TESTSAT", "fetched_at": "2026-09-28T09:00:03Z",
+                "tle_epoch": "2026-09-27T18:00:00Z", "source_url": "https://example/",
+            },
+        },
+    }
+    response = MagicMock()
+    response.raise_for_status = MagicMock()
+    response.json = MagicMock(return_value=payload)
+    monkeypatch.setattr(tle_data.requests, "get", MagicMock(return_value=response))
+
+    metadata = tle_data.fetch_mirror_metadata()
+
+    assert metadata == payload
+
+
+def test_fetch_mirror_metadata_returns_none_on_request_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        tle_data.requests, "get",
+        MagicMock(side_effect=requests.ConnectionError("refused")),
+    )
+
+    assert tle_data.fetch_mirror_metadata() is None
+
+
+def test_fetch_mirror_metadata_returns_none_on_http_error_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing tle-data branch is a 404 from raw.githubusercontent.com
+    -- raise_for_status() must actually be checked here too, not just
+    for the TLE fetch itself."""
+    error_response = requests.Response()
+    error_response.status_code = 404
+    error_response._content = b"404: Not Found"
+    monkeypatch.setattr(tle_data.requests, "get", MagicMock(return_value=error_response))
+
+    assert tle_data.fetch_mirror_metadata() is None
+
+
+def test_fetch_mirror_metadata_returns_none_on_invalid_json(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    response = MagicMock()
+    response.raise_for_status = MagicMock()
+    response.json = MagicMock(side_effect=ValueError("not valid JSON"))
+    monkeypatch.setattr(tle_data.requests, "get", MagicMock(return_value=response))
+
+    assert tle_data.fetch_mirror_metadata() is None
+
+
+def test_fetch_mirror_metadata_returns_none_on_unexpected_shape(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Valid JSON, but missing the keys app.py's provenance display
+    actually needs -- treated the same as "unavailable", not a crash."""
+    response = MagicMock()
+    response.raise_for_status = MagicMock()
+    response.json = MagicMock(return_value={"unexpected": "shape"})
+    monkeypatch.setattr(tle_data.requests, "get", MagicMock(return_value=response))
+
+    assert tle_data.fetch_mirror_metadata() is None
+
+
+# ---------------------------------------------------------------------------
+# parse_iso_utc(): a small, forgiving ISO-timestamp parser used both by
+# compute_staleness_warnings() below and directly by app.py's display code.
+# ---------------------------------------------------------------------------
+
+
+def test_parse_iso_utc_parses_a_real_metadata_timestamp() -> None:
+    parsed = tle_data.parse_iso_utc("2026-09-28T09:00:03Z")
+
+    assert parsed == tle_data.datetime(2026, 9, 28, 9, 0, 3, tzinfo=tle_data.timezone.utc)
+
+
+def test_parse_iso_utc_returns_none_for_garbage() -> None:
+    assert tle_data.parse_iso_utc("not a timestamp") is None
+
+
+# ---------------------------------------------------------------------------
+# compute_staleness_warnings(): the actual decision app.py's st.warning
+# banners are based on -- pure, no Streamlit/network involved.
+# ---------------------------------------------------------------------------
+
+
+def _metadata_generated_at(timestamp: str) -> tle_data.TLEMirrorMetadata:
+    return {"generated_at": timestamp, "satellites": {}}
+
+
+def test_no_warnings_when_mirror_and_all_epochs_are_fresh() -> None:
+    now = tle_data.datetime(2026, 9, 28, 12, 0, 0, tzinfo=tle_data.timezone.utc)
+    metadata = _metadata_generated_at("2026-09-28T11:00:00Z")  # 1h old
+    epochs = {"ISS (ZARYA)": now - tle_data.timedelta(days=1)}  # 1 day old
+
+    result = tle_data.compute_staleness_warnings(metadata, epochs, now=now)
+
+    assert result == {"mirror_stale": False, "stale_satellite_names": []}
+
+
+def test_mirror_stale_when_generated_at_older_than_warning_threshold() -> None:
+    now = tle_data.datetime(2026, 9, 28, 12, 0, 0, tzinfo=tle_data.timezone.utc)
+    metadata = _metadata_generated_at("2026-09-25T12:00:00Z")  # 3 days old
+
+    result = tle_data.compute_staleness_warnings(metadata, {}, now=now)
+
+    assert result["mirror_stale"] is True
+
+
+def test_mirror_stale_is_false_not_true_when_metadata_is_none() -> None:
+    """"Provenance unavailable" and "confirmed stale" are different
+    claims -- app.py shows a separate message for the None case rather
+    than this warning firing on missing data."""
+    result = tle_data.compute_staleness_warnings(None, {}, now=tle_data.datetime.now(tle_data.timezone.utc))
+
+    assert result["mirror_stale"] is False
+
+
+def test_satellite_flagged_stale_when_its_epoch_is_old_but_others_are_not() -> None:
+    now = tle_data.datetime(2026, 9, 28, 12, 0, 0, tzinfo=tle_data.timezone.utc)
+    epochs = {
+        "ISS (ZARYA)": now - tle_data.timedelta(days=1),
+        "OLDSAT": now - tle_data.timedelta(days=10),
+    }
+
+    result = tle_data.compute_staleness_warnings(_metadata_generated_at("2026-09-28T11:00:00Z"), epochs, now=now)
+
+    assert result["stale_satellite_names"] == ["OLDSAT"]
+
+
+def test_compute_staleness_warnings_boundary_exactly_at_threshold_is_not_stale() -> None:
+    now = tle_data.datetime(2026, 9, 28, 12, 0, 0, tzinfo=tle_data.timezone.utc)
+    exactly_at_threshold = now - tle_data.timedelta(hours=tle_data.MIRROR_REFRESH_WARNING_HOURS)
+
+    result = tle_data.compute_staleness_warnings(
+        _metadata_generated_at(exactly_at_threshold.strftime("%Y-%m-%dT%H:%M:%SZ")), {}, now=now,
+    )
+
+    assert result["mirror_stale"] is False

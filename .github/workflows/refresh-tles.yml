@@ -1,0 +1,102 @@
+name: Refresh TLE mirror
+
+# Fetches current TLEs from Celestrak (scripts/fetch_tles.py) and
+# republishes them on the `tle-data` branch, which the deployed
+# Streamlit app reads instead of fetching from Celestrak itself --
+# Streamlit Community Cloud cannot reach celestrak.org at all (confirmed
+# directly: TCP connect timeouts, not an HTTP-level problem), while this
+# runner can. See README's "Data pipeline" section and
+# satellite_pass_predictor/config.py's TLE_MIRROR_URL comment for the
+# full picture.
+on:
+  schedule:
+    # Every 6 hours, at :17 rather than the top of the hour -- GitHub
+    # explicitly recommends avoiding :00 for scheduled workflows, since
+    # that's when load (and delay) is highest across all of Actions.
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main (fetch script + package config)
+        uses: actions/checkout@v4
+
+      - name: Checkout existing tle-data branch, if it exists
+        uses: actions/checkout@v4
+        # Fails on the very first run, before tle-data exists at all --
+        # continue-on-error lets the workflow carry on with an empty
+        # tle/ directory instead of failing here. Any *other* checkout
+        # problem would also be swallowed by this, which is an accepted
+        # trade-off for a small, low-stakes pipeline like this one.
+        continue-on-error: true
+        with:
+          ref: tle-data
+          path: _tle_data_branch
+
+      - name: Seed tle/ from the existing tle-data branch, if any
+        run: |
+          mkdir -p tle
+          if [ -d "_tle_data_branch/tle" ]; then
+            cp -r _tle_data_branch/tle/. tle/
+            echo "Seeded tle/ from the existing tle-data branch."
+          else
+            echo "No existing tle-data branch found (first run) -- starting with an empty tle/ directory."
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Fetch TLEs from Celestrak
+        id: fetch
+        run: |
+          set +e
+          python scripts/fetch_tles.py --output-dir tle
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+        # Runs to completion (exit code captured, not immediately
+        # failing the job) even if some satellites fail -- see the
+        # "Fail the job" step at the end: whatever succeeded must still
+        # be published before the job is allowed to fail.
+
+      - name: Publish tle/ to the tle-data branch (single orphan commit)
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Built in a fresh, throwaway git repo, entirely separate from
+          # the main checkout above -- --orphan starts a new root commit
+          # with no parent/history, and this only ever adds the tle/
+          # directory to it, so tle-data stays a single commit forever
+          # rather than growing with every 6-hourly run. The subsequent
+          # force-push is required (not just convenient): this orphan
+          # commit shares no history with whatever's already on
+          # tle-data, so an ordinary push would be rejected outright.
+          rm -rf _publish
+          mkdir _publish
+          cp -r tle _publish/tle
+          cd _publish
+          git init -q
+          git checkout -q --orphan tle-data
+          git add tle
+          git commit -q -m "Refresh TLE mirror ($(date -u +%Y-%m-%dT%H:%M:%SZ))"
+          git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push -q --force origin tle-data
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Fail the job if any satellite fetch failed
+        if: steps.fetch.outputs.exit_code != '0'
+        run: |
+          echo "One or more satellites failed to fetch this run -- see the 'Fetch TLEs from Celestrak' step above for details."
+          echo "Whatever succeeded (and whatever was preserved from the previous run for the satellite(s) that failed) was still published above."
+          exit 1

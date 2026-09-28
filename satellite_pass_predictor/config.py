@@ -42,46 +42,115 @@ CELESTRAK_URL: str = (
     "?CATNR={norad_id}&FORMAT=TLE"
 )
 
+# Streamlit Community Cloud's outbound network cannot reach celestrak.org
+# at all -- confirmed directly (TCP connect timeouts, not an HTTP error
+# or anything our own retry/timeout handling could paper over), while a
+# GitHub Actions runner reachability test against the same URL succeeded
+# immediately. So the deployed app doesn't fetch from Celestrak itself:
+# a scheduled GitHub Actions workflow (.github/workflows/refresh-tles.yml,
+# scripts/fetch_tles.py) fetches from Celestrak and republishes the
+# results as plain files on the `tle-data` branch of this same repo,
+# which Streamlit Cloud *can* reach (raw.githubusercontent.com is a
+# generic file host, not Celestrak's own infrastructure). See README's
+# "Data pipeline" section for the full picture. main.py/the CLI still
+# fetches from Celestrak directly by default (that direct path works
+# fine outside Streamlit Cloud); the app and an explicit
+# `main.py --source mirror` use this instead -- see
+# tle_data.load_satellites()'s `source` parameter.
+TLE_MIRROR_URL: str = (
+    "https://raw.githubusercontent.com/obrusik2004/satellite-pass-predictor"
+    "/tle-data/tle/tle_{norad_id}.txt"
+)
+TLE_MIRROR_METADATA_URL: str = (
+    "https://raw.githubusercontent.com/obrusik2004/satellite-pass-predictor"
+    "/tle-data/tle/metadata.json"
+)
+
 # How long a cached TLE is trusted before we bother re-downloading it.
 # TLEs are only accurate for a matter of days (drag perturbations aren't
 # modeled by SGP4), so we don't want to cache forever -- but we also
 # don't want to hit Celestrak's servers on every single run.
 MAX_TLE_AGE_DAYS: float = 1.0
 
-# Retries for the actual Celestrak network fetch (not the empty/
-# malformed-response handling, which is a different failure mode with
-# its own explicit ValueError -- see tle_data.py). Streamlit Community
-# Cloud's outbound networking has been observed to be intermittently
-# flaky (confirmed via multiple independent community reports across
-# different external APIs, not specific to Celestrak), so a single
-# dropped connection or timeout shouldn't immediately fall back to a
-# stale cache or fail outright the way a persistent outage still should.
-# 3 retries (4 attempts total) with delays doubling from 1s->2s->4s
-# between them, plus TLE_FETCH_TIMEOUT_SECONDS bounding each individual
-# attempt (see that constant -- without it, a single hung attempt could
-# run far longer than this backoff math alone would suggest). Worst
-# case if every attempt genuinely hangs the full timeout: 4 *
+# The mirror's own on-disk cache needs a *much* shorter age than
+# MAX_TLE_AGE_DAYS above: the mirror is refreshed by GitHub Actions every
+# 6 hours (see refresh-tles.yml), and a full day-long local cache would
+# mean up to ~23 hours of that freshly-published data sitting unused
+# before the app would even check for it again. 1 hour keeps the app
+# checking often enough that a refresh actually reaches users within
+# about an hour of landing on the mirror, without re-fetching the mirror
+# file on literally every single Streamlit rerun. app.py's
+# st.cache_resource TTL for the loaded satellites is set from this same
+# constant (not a separately-chosen number) specifically so the two
+# can't drift apart -- see app.py.
+TLE_MIRROR_CACHE_AGE_HOURS: float = 1.0
+
+# Retries for the actual network fetch (not the empty/malformed-response
+# handling, which is a different failure mode with its own explicit
+# ValueError -- see tle_data.py). Originally added on a theory that
+# Streamlit Community Cloud's outbound networking was intermittently
+# flaky -- since corrected by direct investigation: Streamlit Cloud
+# cannot reach celestrak.org *at all* (consistent TCP connect timeouts,
+# not an occasional blip), which no amount of retrying from inside that
+# environment can fix -- that's the actual reason for the mirror
+# pipeline (see TLE_MIRROR_URL above), not this retry loop. This retry
+# loop is still worth keeping for genuinely transient failures on
+# whichever source is actually reachable -- a dropped connection to the
+# mirror, or to Celestrak itself from main.py's direct local fetch --
+# just not as a fix for a host that's unreachable outright. 3 retries
+# (4 attempts total) with delays doubling from 1s->2s->4s between them,
+# plus TLE_FETCH_TIMEOUT_SECONDS bounding each individual attempt (see
+# that constant -- without it, a single hung attempt could run far
+# longer than this backoff math alone would suggest). Worst case if
+# every attempt genuinely hangs the full timeout: 4 *
 # TLE_FETCH_TIMEOUT_SECONDS (attempts) + 1+2+4 (backoff between them) =
 # 47s -- not fast, but bounded and finite, for what should be a rare
-# total-outage case; enough attempts to absorb a brief blip without
-# turning this into an unbounded retry loop for a genuine outage.
+# case; enough attempts to absorb a brief blip without turning this
+# into an unbounded retry loop for a genuine, persistent outage.
 TLE_FETCH_MAX_RETRIES: int = 3
 TLE_FETCH_RETRY_BASE_DELAY_SECONDS: float = 1.0
 
-# Skyfield's download() (which load.tle_file() calls under the hood)
-# passes no timeout to urlopen() at all -- confirmed directly against
-# skyfield/iokit.py's source, not assumed -- so without this, a hung
-# connection attempt relies entirely on Python's global default socket
-# timeout (None: unbounded) and falls back to whatever the OS/TCP stack
-# itself eventually does (SYN retransmission exhaustion, commonly tens
-# of seconds to a couple of minutes), not a short, predictable failure.
-# tle_data.py bounds each fetch attempt to this many seconds via
-# socket.setdefaulttimeout(), scoped narrowly around just that call.
-# 10s is generous for what this actually has to do -- DNS + TCP + TLS
-# handshake plus downloading a TLE file that's only a few hundred bytes
-# -- while still failing fast enough that TLE_FETCH_MAX_RETRIES retries
-# add a bounded, known worst case rather than an open-ended one.
+# Bounds each individual fetch attempt (celestrak.org or the mirror) via
+# requests.get(timeout=...) -- a genuinely per-call, thread-safe timeout
+# (see tle_data.py's _download_and_cache_tle() docstring for why this
+# matters specifically under Streamlit's per-session-thread concurrency:
+# an earlier version used socket.setdefaulttimeout(), a process-global
+# setting that turned out to be unsafe there). Without an explicit
+# timeout at all, a hung connection falls back to whatever the OS/TCP
+# stack eventually does on its own (SYN retransmission exhaustion,
+# commonly tens of seconds to a couple of minutes), not a short,
+# predictable failure. 10s is generous for what this actually has to do
+# -- DNS + TCP + TLS handshake plus downloading a TLE file that's only a
+# few hundred bytes -- while still failing fast enough that
+# TLE_FETCH_MAX_RETRIES retries add a bounded, known worst case rather
+# than an open-ended one.
 TLE_FETCH_TIMEOUT_SECONDS: float = 10.0
+
+# Thresholds for app.py's st.warning banners -- both pure data-staleness
+# checks (see tle_data.is_older_than()), not related to the on-disk
+# cache ages above (those govern when to *refetch*; these govern when to
+# *warn the user the data itself looks old*, regardless of why).
+#
+# The mirror is refreshed every 6h (refresh-tles.yml) -- if its last
+# successful run is more than 24h old, at least 3-4 consecutive
+# scheduled runs have been silently missed (the workflow stopped
+# running, or GitHub auto-disabled it after 60 days of repo inactivity
+# -- see README), which is worth surfacing rather than quietly serving
+# aging data with no indication anything's wrong.
+MIRROR_REFRESH_WARNING_HOURS: float = 24.0
+
+# A TLE's epoch (when its orbital elements were valid) more than this
+# many days old means the data itself is stale, independent of whether
+# the mirror refresh pipeline is running on schedule -- Celestrak simply
+# hasn't published a newer set yet (e.g. for a less-actively-tracked
+# CubeSat) or the satellite's own tracking has lapsed. Set above
+# MAX_TLE_AGE_DAYS (which only governs *our own* refetch cadence, once a
+# day) to leave headroom for Celestrak's normal publish cadence -- even
+# actively-tracked objects aren't always republished daily -- while still
+# catching genuinely old data well before SGP4 accuracy (which degrades
+# over days as unmodeled drag accumulates, per MAX_TLE_AGE_DAYS's own
+# comment) becomes a real concern.
+TLE_EPOCH_WARNING_DAYS: float = 5.0
 
 TLE_CACHE_DIR: str = "data"
 OUTPUT_DIR: str = "output"

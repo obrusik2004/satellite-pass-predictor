@@ -132,8 +132,54 @@ the combined report to `output/report.html`.
 ```bash
 pip install -r requirements-dev.txt
 pytest
-mypy main.py satellite_pass_predictor/ tests/
+mypy app.py main.py satellite_pass_predictor/ tests/ scripts/
 ```
+
+## Data pipeline
+
+Streamlit Community Cloud's outbound network cannot reach `celestrak.org` at
+all — confirmed directly (consistent TCP connect timeouts, not an HTTP-level
+problem that a shorter timeout or more retries could work around), while a
+GitHub Actions runner reaches it immediately. So the deployed app doesn't
+fetch TLEs from Celestrak itself: a scheduled GitHub Actions workflow does,
+and republishes the results as plain files in this same repository, which
+Streamlit Cloud *can* reach (`raw.githubusercontent.com` is a generic file
+host, unrelated to Celestrak's own infrastructure).
+
+```
+                    scripts/fetch_tles.py                 raw.githubusercontent.com
+   Celestrak  ───────  every 6h  ───────▶  tle-data branch  ───────────────▶  Streamlit app
+  (gp.php API)      (GitHub Actions)      (tle/*.txt +                    (source="mirror",
+                                            metadata.json)                  ~1h local cache)
+```
+
+- **`scripts/fetch_tles.py`** fetches each tracked satellite's TLE from
+  Celestrak, validates it (exactly one TLE, parses with Skyfield, NORAD ID
+  matches what was actually requested) *before* writing anything, and never
+  overwrites a previously-published file with a bad response — a satellite
+  that fails to refresh just keeps its last good file.
+- **`.github/workflows/refresh-tles.yml`** runs that script every 6 hours
+  (plus on manual trigger), then publishes `tle/` as a single orphan commit
+  on the `tle-data` branch — force-pushed each run, so the branch never
+  grows past one commit — authored by `github-actions[bot]`. Publishing to
+  `main` instead would trigger a Streamlit redeploy on every refresh and
+  pollute the commit history with a run every 6 hours; a dedicated branch
+  avoids both.
+- **The app** (`tle_data.load_satellites(source="mirror")`) reads TLEs from
+  that branch over plain HTTPS, with its own short (~1 hour) local cache —
+  short specifically so a 6-hourly refresh actually reaches users within
+  about an hour, not up to a day later — and shows a small provenance line
+  (last mirror refresh time, each satellite's TLE epoch age) plus a warning
+  if either looks unusually stale.
+- **`main.py`/the CLI** still fetches from Celestrak directly by default
+  (that works fine outside Streamlit Cloud); pass `--source mirror` to
+  exercise the mirror path locally instead.
+
+**Known limitation:** GitHub automatically disables a scheduled workflow
+after 60 days with no activity in the repository. If passes stop updating
+and the app's provenance line looks stale, check the repo's Actions tab for
+a "this scheduled workflow has been disabled" notice and re-enable it there
+(or push any commit to the repo, which resets the inactivity clock).
 
 ## Verification
 
@@ -156,11 +202,14 @@ regression test rather than left as a one-off manual check.
 
 ## Status
 
-**Built:** TLE ingestion with caching and fallback handling, SGP4 propagation,
-ground-track visualization, Kourou pass detection with edge-case handling,
-a combined HTML report, full type hints (mypy-clean), and a pytest suite
-covering the logic and the edge cases above.
+**Live:** the Streamlit app is deployed at
+[kourou-satellite-pass-predictor.streamlit.app](https://kourou-satellite-pass-predictor.streamlit.app).
 
-**Planned:** a Streamlit web app on top of this for interactively exploring
-ground tracks and passes, rather than only running it from the command line.
+**Built:** TLE ingestion with caching and fallback handling (including the
+GitHub Actions-refreshed mirror the deployed app reads from — see Data
+pipeline above), SGP4 propagation, ground-track visualization, Kourou pass
+detection with edge-case handling, a combined HTML report, an interactive
+Streamlit app (3D globe view, sortable/selectable pass table, per-pass sky
+plot), full type hints (mypy-clean), and a pytest suite covering the logic
+and the edge cases above.
 Not started yet.

@@ -29,14 +29,22 @@ from satellite_pass_predictor.config import (
     KOUROU,
     KOUROU_LATITUDE_DEG,
     KOUROU_LONGITUDE_DEG,
-    MAX_TLE_AGE_DAYS,
     MIN_PASS_ELEVATION_DEG,
+    MIRROR_REFRESH_WARNING_HOURS,
     SATELLITES,
+    TLE_EPOCH_WARNING_DAYS,
+    TLE_MIRROR_CACHE_AGE_HOURS,
 )
 from satellite_pass_predictor.globe import build_globe_deck
 from satellite_pass_predictor.propagation import compute_ground_track
 from satellite_pass_predictor.skyplot import build_sky_plot_figure
-from satellite_pass_predictor.tle_data import load_satellites
+from satellite_pass_predictor.tle_data import (
+    TLEMirrorMetadata,
+    compute_staleness_warnings,
+    fetch_mirror_metadata,
+    load_satellites,
+    parse_iso_utc,
+)
 from satellite_pass_predictor.visibility import PassDict, compute_passes
 from satellite_pass_predictor.visualization import (
     NOTE_CODE_LEGEND,
@@ -68,7 +76,7 @@ GLOBE_MAX_DURATION_HOURS = 6
 
 # Streamlit reruns this entire script on every widget interaction, so
 # without caching, load_satellites() -- real file I/O, and potentially a
-# Celestrak fetch -- would run again every time someone moves a slider.
+# network fetch -- would run again every time someone moves a slider.
 #
 # st.cache_resource, not st.cache_data: cache_data pickles its return
 # value (to hand back a safe copy and guard against a caller mutating
@@ -81,20 +89,41 @@ GLOBE_MAX_DURATION_HOURS = 6
 # That's safe here since nothing in this app mutates the returned
 # EarthSatellite objects.
 #
-# TTL matches config.MAX_TLE_AGE_DAYS exactly: that's the point at which
-# load_satellites() itself would already consider its on-disk TLE cache
-# stale and refetch from Celestrak, so there's nothing to gain from
-# expiring this cache any sooner (a call within that window would just
-# re-read the same on-disk cache and return an equivalent result), and
-# no reason to hold it longer than the data's own staleness policy.
+# source="mirror", not the default "celestrak": Streamlit Community
+# Cloud cannot reach celestrak.org at all (see TLE_MIRROR_URL's comment
+# in config.py) -- this app reads the GitHub-Actions-refreshed mirror
+# instead. main.py/the CLI still defaults to "celestrak" directly, which
+# works fine outside Streamlit Cloud.
+#
+# TTL matches config.TLE_MIRROR_CACHE_AGE_HOURS exactly (not
+# MAX_TLE_AGE_DAYS, which governs the *Celestrak-source* on-disk cache
+# and would be a full day too long here) -- that's the point at which
+# load_satellites(source="mirror") itself would already consider its
+# on-disk cache stale and re-check the mirror, so there's nothing to
+# gain from expiring this cache any sooner, and no reason to hold it
+# longer than the data's own staleness policy. Keeping both on the same
+# constant is what actually guarantees a 6-hourly mirror refresh reaches
+# users within about an hour, rather than the two silently drifting
+# apart if chosen independently.
 #
 # Always loads the full configured satellite set, regardless of which
 # ones are currently selected in the UI -- so changing the selection
-# below never invalidates this cache or touches Celestrak; selection is
-# just an in-memory filter over an already-loaded dict.
-@st.cache_resource(ttl=int(MAX_TLE_AGE_DAYS * 24 * 60 * 60))
+# below never invalidates this cache or re-checks the mirror; selection
+# is just an in-memory filter over an already-loaded dict.
+@st.cache_resource(ttl=int(TLE_MIRROR_CACHE_AGE_HOURS * 60 * 60))
 def _load_all_satellites() -> dict[str, EarthSatellite]:
-    return load_satellites()
+    return load_satellites(source="mirror")
+
+
+# Separate cache (same TTL, so both refresh in step) for the mirror's
+# metadata.json -- purely for the provenance caption/warnings below, not
+# needed for the TLEs themselves. st.cache_data, not st.cache_resource:
+# this returns a plain dict-or-None, not an unpicklable Skyfield object,
+# so cache_data's usual copy-on-read behavior is the right (and default)
+# choice here.
+@st.cache_data(ttl=int(TLE_MIRROR_CACHE_AGE_HOURS * 60 * 60))
+def _load_mirror_metadata() -> TLEMirrorMetadata | None:
+    return fetch_mirror_metadata()
 
 
 st.title("Satellite Pass Predictor")
@@ -127,6 +156,49 @@ satellites = {name: all_satellites[name] for name in selected_names}
 
 ts = load.timescale()
 now = ts.now()
+
+# Data provenance: where these TLEs actually came from and how fresh
+# they are -- worth surfacing explicitly since this app reads a mirror
+# rather than fetching Celestrak directly (see _load_all_satellites()'s
+# comment for why), so "fresh" here depends on a separate scheduled
+# pipeline actually having run recently, not just on this request
+# succeeding.
+mirror_metadata = _load_mirror_metadata()
+satellite_epochs = {name: sat.epoch.utc_datetime() for name, sat in satellites.items()}
+staleness = compute_staleness_warnings(mirror_metadata, satellite_epochs)
+
+if mirror_metadata is None:
+    # fetch_mirror_metadata() already degrades to None for any problem
+    # (network failure, missing branch, malformed JSON) rather than
+    # raising -- the TLEs themselves already loaded fine above (or
+    # load_satellites() would have raised), so this is purely "we can't
+    # show provenance details right now," not a reason to stop.
+    st.caption("TLEs from Celestrak via GitHub mirror -- refresh provenance unavailable right now.")
+else:
+    generated_at = parse_iso_utc(mirror_metadata["generated_at"])
+    generated_at_str = (
+        generated_at.strftime("%Y-%m-%d %H:%M UTC") if generated_at is not None
+        else mirror_metadata["generated_at"]  # malformed timestamp -- show it raw rather than hide it
+    )
+    st.caption(f"TLEs from Celestrak via GitHub mirror, last refreshed {generated_at_str}")
+
+epoch_ages = ", ".join(
+    f"{name} {(now.utc_datetime() - epoch).total_seconds() / 86400:.1f}d"
+    for name, epoch in satellite_epochs.items()
+)
+st.caption(f"TLE epoch age -- {epoch_ages}")
+
+if staleness["mirror_stale"]:
+    st.warning(
+        f"The TLE mirror hasn't refreshed in over {MIRROR_REFRESH_WARNING_HOURS:.0f}h -- "
+        f"the scheduled GitHub Actions workflow may have stopped running "
+        f"(see README's Data pipeline section). Data shown may be outdated."
+    )
+if staleness["stale_satellite_names"]:
+    st.warning(
+        f"TLE data for {', '.join(staleness['stale_satellite_names'])} is more than "
+        f"{TLE_EPOCH_WARNING_DAYS:.0f} day(s) old -- predictions for that satellite may be less accurate."
+    )
 
 globe_duration_hours = min(duration_hours, GLOBE_MAX_DURATION_HOURS)
 st.subheader(f"Ground Tracks (next {globe_duration_hours}h)")
