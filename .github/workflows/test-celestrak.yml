@@ -1,0 +1,51 @@
+name: Test Celestrak reachability
+
+# Manually triggerable only -- this is a throwaway diagnostic to check
+# whether GitHub Actions runners can reach celestrak.org at all
+# (Streamlit Cloud can't -- confirmed TCP connect timeouts), not a
+# real CI check. No schedule, no push/PR trigger.
+on:
+  workflow_dispatch:
+
+jobs:
+  test-celestrak:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Curl Celestrak's TLE endpoint
+        run: |
+          set +e
+          URL="https://celestrak.org/NORAD/elements/gp.php?CATNR=25544&FORMAT=TLE"
+          echo "Fetching: $URL"
+          echo "=================== curl verbose trace ==================="
+          HTTP_STATUS=$(curl \
+            --max-time 15 \
+            --user-agent "satellite-pass-predictor-reachability-test/1.0 (throwaway CI diagnostic; github.com/actions)" \
+            --verbose \
+            --show-error \
+            --write-out "%{http_code}" \
+            --output response_body.txt \
+            "$URL")
+          CURL_EXIT=$?
+          echo "============================================================"
+          echo ""
+          echo "curl exit code: $CURL_EXIT"
+          echo "HTTP status code: $HTTP_STATUS"
+          echo ""
+          echo "=================== response body ==================="
+          cat response_body.txt
+          echo "======================================================="
+          echo "(expected on success: 3 lines -- satellite name, then two TLE lines starting with '1 ' and '2 ')"
+          echo ""
+
+          if [ "$CURL_EXIT" -ne 0 ]; then
+            echo "FAILED: curl itself did not complete (exit code $CURL_EXIT) -- this is a connection-level failure, not an HTTP error from Celestrak."
+            echo "Common curl exit codes: 6 = could not resolve host (DNS), 7 = failed to connect, 28 = operation timed out (connect or overall)."
+            exit 1
+          fi
+
+          if [ "$HTTP_STATUS" -lt 200 ] || [ "$HTTP_STATUS" -ge 300 ]; then
+            echo "FAILED: connection succeeded but Celestrak returned HTTP $HTTP_STATUS (not a network/timeout problem -- an HTTP-level error)."
+            exit 1
+          fi
+
+          echo "SUCCESS: reached celestrak.org and got HTTP $HTTP_STATUS."
