@@ -21,13 +21,18 @@ permissions:
 
 jobs:
   refresh:
-    runs-on: ubuntu-latest
+    # Pinned rather than ubuntu-latest: GitHub has announced ubuntu-latest
+    # will migrate to Ubuntu 26 from 2026-10-19, and this pipeline feeds a
+    # live demo -- a silent runner OS change (e.g. no prebuilt Python 3.11
+    # yet for the new image) must not break it unannounced. Upgrade this
+    # deliberately later, not via a floating label.
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout main (fetch script + package config)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Checkout existing tle-data branch, if it exists
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         # Fails on the very first run, before tle-data exists at all --
         # continue-on-error lets the workflow carry on with an empty
         # tle/ directory instead of failing here. Any *other* checkout
@@ -49,7 +54,7 @@ jobs:
           fi
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.11"
           cache: "pip"
