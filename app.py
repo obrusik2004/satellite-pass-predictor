@@ -47,7 +47,7 @@ from satellite_pass_predictor.config import (
     TLE_MIRROR_CACHE_AGE_HOURS,
 )
 from satellite_pass_predictor.globe import build_globe_deck
-from satellite_pass_predictor.propagation import compute_ground_track
+from satellite_pass_predictor.propagation import GroundTrackDict, compute_ground_track
 from satellite_pass_predictor.skyplot import build_sky_plot_figure
 from satellite_pass_predictor.tle_data import (
     TLEMirrorMetadata,
@@ -141,6 +141,15 @@ st.markdown(
         margin-right: 0.45em;
         vertical-align: middle;
     }}
+    .st-key-globe_header {{
+        margin-top: 0.75rem;
+    }}
+    .st-key-globe_header [data-testid="stMarkdownContainer"] {{
+        margin-bottom: 0;
+    }}
+    .st-key-globe_header h3 {{
+        padding: 0;
+    }}
     .pp-footer {{
         font-size: 0.75rem;
         line-height: 1.6;
@@ -171,6 +180,46 @@ st.markdown(
 # orbits per satellite, individual tracks still clearly distinguishable,
 # ~1440 total points, well under a second to build.
 GLOBE_MAX_DURATION_HOURS = 6
+
+# Changing the key of the container holding the globe remounts the chart,
+# which restores its initial view; the "Reset view" button bumps the counter.
+GLOBE_VIEW_COUNTER_KEY = "globe_view_counter"
+st.session_state.setdefault(GLOBE_VIEW_COUNTER_KEY, 0)
+
+
+def _reset_globe_view() -> None:
+    st.session_state[GLOBE_VIEW_COUNTER_KEY] += 1
+
+
+# A fragment, so "Reset view" reruns only the globe and not the whole script.
+@st.fragment
+def _render_globe(
+    ground_tracks: dict[str, GroundTrackDict], globe_duration_hours: int, duration_hours: int
+) -> None:
+    with st.container(
+        key="globe_header",
+        horizontal=True,
+        horizontal_alignment="distribute",
+        vertical_alignment="center",
+    ):
+        st.subheader(f"Ground Tracks (next {globe_duration_hours}h)")
+        st.button(
+            "Reset view",
+            key="globe_reset",
+            icon=":material/explore:",
+            help="Return the globe to its initial view over Kourou.",
+            on_click=_reset_globe_view,
+        )
+    if duration_hours > GLOBE_MAX_DURATION_HOURS:
+        st.caption(
+            f"Showing the next {globe_duration_hours}h rather than the full "
+            f"{duration_hours}h time window -- beyond a few orbits, ground "
+            "tracks overlap into a solid, unreadable mesh regardless of "
+            "sampling detail. The passes table below still covers the full "
+            f"{duration_hours}h."
+        )
+    with st.container(key=f"globe_{st.session_state[GLOBE_VIEW_COUNTER_KEY]}"):
+        st.pydeck_chart(build_globe_deck(ground_tracks), height=600)
 
 
 # Streamlit reruns this entire script on every widget interaction, so
@@ -372,22 +421,13 @@ if staleness["stale_satellite_names"]:
     )
 
 globe_duration_hours = min(duration_hours, GLOBE_MAX_DURATION_HOURS)
-st.subheader(f"Ground Tracks (next {globe_duration_hours}h)")
-if duration_hours > GLOBE_MAX_DURATION_HOURS:
-    st.caption(
-        f"Showing the next {globe_duration_hours}h rather than the full "
-        f"{duration_hours}h time window -- beyond a few orbits, ground "
-        "tracks overlap into a solid, unreadable mesh regardless of "
-        "sampling detail. The passes table below still covers the full "
-        f"{duration_hours}h."
-    )
 ground_tracks = {
     name: compute_ground_track(
         sat, ts, start_time=now, duration_hours=globe_duration_hours, step_minutes=1
     )
     for name, sat in satellites.items()
 }
-st.pydeck_chart(build_globe_deck(ground_tracks), height=600)
+_render_globe(ground_tracks, globe_duration_hours, duration_hours)
 
 st.subheader("Visibility Passes over Kourou")
 passes_by_satellite = {
