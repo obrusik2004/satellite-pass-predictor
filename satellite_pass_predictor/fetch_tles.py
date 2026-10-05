@@ -162,6 +162,7 @@ def write_outputs(
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Fetch every tracked satellite, publish what succeeded, and return 1 if any failed."""
     parser = argparse.ArgumentParser(
         description=(
             "Fetch current TLEs from Celestrak and publish them as a flat "

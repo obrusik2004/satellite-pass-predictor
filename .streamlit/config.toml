@@ -1,56 +1,23 @@
 [client]
-# Hides the developer toolbar (Deploy button, "Stop"/"rerun"/"clear
-# cache" kebab-menu items) -- confirmed as a real, valid value for this
-# pinned streamlit==1.64.0 directly against its own config.py option
-# description, not guessed. Viewer-facing items (if any were set) would
-# still show; with none set here, "minimal" hides the menu entirely,
-# which also fixes the app's own header band rendering with its top
-# edge underneath Streamlit's fixed top bar -- see app.py's .pp-header
-# CSS comment for the rest of that fix.
+# Hides the developer toolbar (deploy button and rerun/clear-cache menu items).
 toolbarMode = "minimal"
 
-# Custom theme for the Satellite Pass Predictor app -- an ESA-inspired
-# (esa.int) dark navy palette. Deliberately inspired by, not a copy of,
-# ESA's own branding: no logo, no "ESA" name/wordmark anywhere.
-#
-# The same color values are also set as plain Python constants in
-# satellite_pass_predictor/config.py's "Visual theme" section, for the
-# two renderers this file can't reach (pydeck's globe, matplotlib's
-# ground-track figure). Keep the two in sync by hand -- there's no
-# single file both a TOML parser and Python code can read.
+# Dark navy theme. The same colors are duplicated in
+# satellite_pass_predictor/config.py for renderers Streamlit's theme can't reach (pydeck,
+# matplotlib, the HTML report); keep the two in sync by hand.
 [theme]
 base = "dark"
 backgroundColor = "#0B1D26"
 secondaryBackgroundColor = "#003247"
 textColor = "#EAF2F5"
 borderColor = "#335E6F"
-
-# A muted, low-saturation navy/teal accent -- deliberately NOT any of
-# the four saturated satellite colors (config.py's SATELLITE_COLORS), so
-# a focused/active widget (slider handle, multiselect tag, focus ring)
-# can never look like it's indicating a satellite on the globe's legend.
-# Verified against both backgrounds directly (WCAG contrast computed,
-# not eyeballed): 4.64:1 against backgroundColor and 3.65:1 against
-# secondaryBackgroundColor -- both clear WCAG's 3:1 minimum for UI
-# components/graphics (this isn't body text, so 4.5:1 isn't the bar).
+# Muted accent, deliberately distinct from every satellite color so a focused widget can't
+# be read as a satellite in the legend.
 primaryColor = "#5B8BA0"
-
-# Google Fonts, loaded the way this pinned streamlit==1.64.0 actually
-# supports for a remote font -- confirmed directly against this
-# installed version's own config.py option descriptions and its bundled
-# theming skill reference (venv/Lib/site-packages/streamlit/.agents/
-# skills/developing-with-streamlit/references/theme.md), not guessed:
-# "<family>:<Google Fonts CSS2 URL>". Oswald (bold condensed) for
-# headings, echoing ESA's own condensed display type without using
-# their actual (proprietary) NotesESA font; Inter for body text -- a
-# clean, highly legible sans at small sizes.
 font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap"
 headingFont = "Oswald:https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&display=swap"
 
 [theme.sidebar]
-# Reuses the palette's "header bar / sidebar" color -- distinct from the
-# main page background so the sidebar reads as its own panel, the same
-# treatment ESA's own site gives its header bar.
 backgroundColor = "#003247"
 secondaryBackgroundColor = "#0B1D26"
 textColor = "#EAF2F5"

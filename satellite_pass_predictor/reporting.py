@@ -1,15 +1,6 @@
-"""
-Reporting: combines the ground-track plot and the visibility-pass table
-into one self-contained HTML report -- a single file (the plot embedded
-as a base64 data URI, not a linked image) that works if emailed or
-opened from anywhere, with nothing that can go missing.
+"""Self-contained HTML report: the ground-track plot (embedded as base64) and the pass table.
 
-No templating library here (Jinja2 etc.): the page is one mostly-static
-shell with a handful of substitutions and one small loop over table
-rows, built with plain f-strings and a loop -- exactly the case plain
-string templating is good enough for, without pulling in a dependency
-whose actual template-language features (control flow, filters,
-template inheritance) this page has no use for.
+Built with plain f-strings; the page is too small to justify a template engine.
 """
 
 import base64
@@ -32,34 +23,14 @@ from .config import (
 from .visibility import PassDict
 from .visualization import PASS_TABLE_COLUMNS, build_pass_rows
 
-# Table columns that hold quantities (degrees, minutes) rather than
-# labels/timestamps -- right-aligned in the HTML table, unlike the
-# fixed-width text table where every column is left-aligned. Plain text
-# output has no real notion of alignment beyond padding; an HTML table
-# can and should distinguish "a number" from "a label" the way a
-# spreadsheet would.
+# Quantity columns are right-aligned in the HTML table.
 _NUMERIC_COLUMNS = {"start_az", "max_elev", "end_az", "duration_min"}
 
-# "r, g, b" (no rgb()/parens) so it can be dropped straight into an
-# rgba(...) CSS value below, for the one color (--muted) that needs
-# translucency rather than a flat hex -- CSS custom properties can't be
-# partially substituted into another color function otherwise.
+# "r, g, b" for use inside rgba(...), since CSS variables can't add alpha to a hex color.
 _TEXT_RGB = ", ".join(str(c) for c in hex_to_rgb(THEME_TEXT_COLOR))
 
-# Same ESA-inspired dark navy theme as the Streamlit app (config.py's
-# THEME_* constants, also set in .streamlit/config.toml) -- restyled
-# from an earlier light theme after build_ground_tracks_figure() (the
-# embedded ground-track plot) switched to a dark background for its own
-# contrast reasons (see that function's docstring): a dark plot dropped
-# into a light report card looked like a rendering mistake, not a
-# deliberate design. This keeps the report visually consistent with the
-# rest of the project rather than the accident of "whichever theme this
-# file happened to be written in first."
-# A separate f-string for just the :root variables block, concatenated
-# with the plain (non-f) rest of the stylesheet below -- an f-string
-# covering the *whole* stylesheet would require escaping every single
-# `{`/`}` in every ordinary CSS rule (there are dozens) as `{{`/`}}`, for
-# no benefit: only :root's declarations actually need substitution.
+# Same dark theme as the app. Only :root needs f-string substitution; the rest of the
+# stylesheet is a plain string so its braces needn't be escaped.
 _ROOT_VARS = f"""
   :root {{
     --bg: {THEME_BACKGROUND_COLOR};
@@ -112,9 +83,7 @@ _CSS = (
     border-radius: 6px;
     display: block;
   }
-  /* Wraps the table only -- so a wide table (long Notes text, many
-     columns) scrolls within its own box instead of forcing the whole
-     page to scroll horizontally. */
+  /* A wide table scrolls in its own box instead of the whole page. */
   .table-wrapper { overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
   th, td {
@@ -123,12 +92,7 @@ _CSS = (
     border-bottom: 1px solid var(--border);
     white-space: nowrap;
   }
-  /* Notes can genuinely be long (multiple comma-joined flags) -- letting
-     it wrap keeps that readable instead of truncated at the edge of the
-     table-wrapper's scroll area. No min-width: the column is empty in
-     the common case (no flagged passes) and shouldn't reserve space it
-     isn't using; when it does have content, wrapping plus the table's
-     own natural layout is enough to keep it readable. */
+  /* Notes can be long and is usually empty, so let it wrap rather than reserve width. */
   td.notes { white-space: normal; }
   th {
     color: var(--muted);
@@ -152,9 +116,7 @@ _CSS = (
 
 
 def _column_css_class(key: str) -> str:
-    """CSS class for a pass-table column: right-aligned for quantities,
-    wrapping (rather than truncated) for the potentially-long Notes
-    column, plain for everything else (labels/timestamps)."""
+    """CSS class for a pass-table column: "num" for quantities, "notes" for Notes, else none."""
     if key in _NUMERIC_COLUMNS:
         return "num"
     if key == "notes":
@@ -163,11 +125,7 @@ def _column_css_class(key: str) -> str:
 
 
 def _passes_table_html(passes_by_satellite: dict[str, list[PassDict]]) -> str:
-    """
-    Render the exact same rows/columns print_passes_table() prints (via
-    the shared build_pass_rows() helper), as an HTML <table> rather
-    than a <pre>-dumped copy of the terminal text.
-    """
+    """Render the same rows and columns as print_passes_table() as an HTML table."""
     rows = build_pass_rows(passes_by_satellite)
     if not rows:
         return '<p class="no-passes">No passes above threshold in this window.</p>'
@@ -184,9 +142,6 @@ def _passes_table_html(passes_by_satellite: dict[str, list[PassDict]]) -> str:
         cells = "".join(_cell("td", key, str(row[key])) for key, _, _ in PASS_TABLE_COLUMNS)
         body_rows.append(f"<tr>{cells}</tr>")
 
-    # Wrapped in .table-wrapper so a wide table (long Notes text, this
-    # many columns) scrolls within its own box on a narrow viewport
-    # instead of forcing the whole page to scroll horizontally.
     return (
         '<div class="table-wrapper">\n'
         "<table>\n"
@@ -205,20 +160,11 @@ def generate_html_report(
     min_elevation_deg: float = MIN_PASS_ELEVATION_DEG,
     output_path: str | None = None,
 ) -> str:
-    """
-    Build a single, self-contained HTML report combining the ground-
-    track plot and the visibility-pass table, and save it.
+    """Write the HTML report (default: OUTPUT_DIR/report.html) and return its path.
 
-    Takes the *path* of an already-saved ground-track PNG (from
-    plot_ground_tracks()) rather than the satellites/timescale needed to
-    draw one -- the plot has already been computed once for the
-    standalone PNG, and re-propagating and re-rendering it here just to
-    embed it would be duplicate work for an identical image. The PNG
-    bytes are read back and base64-encoded into a `data:` URI, so the
-    resulting HTML file has no external image reference that could go
-    missing if moved, emailed, or opened somewhere else.
-
-    Returns the path the HTML report was saved to.
+    `ground_track_png_path` is an already-rendered plot; it is embedded as a base64 data URI so
+    the report is a single file. `duration_hours` and `min_elevation_deg` are used for the
+    headings only; they should match what the passes were computed with.
     """
     if output_path is None:
         output_path = os.path.join(OUTPUT_DIR, "report.html")

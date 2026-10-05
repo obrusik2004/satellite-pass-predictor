@@ -1,25 +1,6 @@
-"""
-Tests for satellite_pass_predictor.fetch_tles -- the module
-.github/workflows/refresh-tles.yml runs to fetch TLEs from Celestrak and
-publish them to the tle-data branch mirror (see that module's own
-docstring for why this pipeline exists at all).
+"""Tests for satellite_pass_predictor.fetch_tles, the TLE mirror refresh script.
 
-No real network, no real Celestrak: requests.get() is mocked throughout,
-using the same frozen ISS TLE fixture conftest.py's iss_satellite fixture
-uses (real, valid TLE bytes, not a synthetic stand-in) for the "valid
-response" cases, and deliberately-broken bytes (HTML, empty, a real TLE
-for the wrong NORAD ID) for the rejection cases.
-
-What's worth testing: _validate_tle()'s three rejection cases (not
-exactly one TLE -- covers HTML error pages and empty bodies alike --
-and a NORAD ID mismatch) alongside the one acceptance case;
-fetch_one()'s translation of both fetch and validation failures into a
-FetchOutcome rather than a raised exception; write_outputs()'s core
-guarantee (a failed satellite's existing file and metadata entry are
-left completely untouched, while generated_at still advances and
-whatever succeeded still gets published); load_existing_metadata()'s
-graceful handling of a missing or malformed file; and main()'s exit
-code (0 only when every satellite succeeds).
+requests.get is mocked throughout; the frozen ISS TLE is used as realistic response bytes.
 """
 
 import json
@@ -37,25 +18,21 @@ _ISS_NORAD_ID = 25544
 
 
 def _fake_response(content: bytes, status_code: int = 200):
-    """A requests.Response stand-in -- raise_for_status() raises for a
-    non-2xx status, exactly like a real Response would, rather than a
-    mock that always succeeds regardless of the status it's given."""
+    """A real requests.Response, so raise_for_status() behaves as in production."""
     response = requests.Response()
     response.status_code = status_code
     response._content = content
     return response
 
 
-# ---------------------------------------------------------------------------
-# _validate_tle(): the core accept/reject logic, no network involved.
-# ---------------------------------------------------------------------------
+# _validate_tle()
 
 
 def test_validate_tle_accepts_a_real_valid_tle() -> None:
     raw, epoch = fetch_tles._validate_tle(_ISS_TLE_BYTES, _ISS_NORAD_ID)
 
     assert raw == _ISS_TLE_BYTES
-    assert epoch.year == 2026  # sanity check: a real, parsed epoch, not a placeholder
+    assert epoch.year == 2026
 
 
 def test_validate_tle_rejects_an_html_error_page() -> None:
@@ -71,19 +48,14 @@ def test_validate_tle_rejects_an_empty_body() -> None:
 
 
 def test_validate_tle_rejects_a_mismatched_norad_id() -> None:
-    """A structurally valid TLE, but for a different satellite than the
-    one actually requested -- e.g. Celestrak (or a mirror gone stale in
-    a way that serves the wrong content) answering the wrong CATNR."""
+    """A valid TLE for a different satellite than requested is rejected."""
     wrong_norad_id = 99999
 
     with pytest.raises(ValueError, match="NORAD ID mismatch"):
         fetch_tles._validate_tle(_ISS_TLE_BYTES, wrong_norad_id)
 
 
-# ---------------------------------------------------------------------------
-# fetch_one(): fetch + validate, translated into a FetchOutcome that
-# never raises.
-# ---------------------------------------------------------------------------
+# fetch_one(): never raises; failures are returned in the FetchOutcome.
 
 
 def test_fetch_one_succeeds_for_a_valid_response(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -120,11 +92,7 @@ def test_fetch_one_fails_on_a_request_exception(monkeypatch: pytest.MonkeyPatch)
 def test_fetch_one_fails_on_an_invalid_response_without_retrying(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A structurally bad response (HTML, empty, wrong satellite) is a
-    validation problem, not a transient network one -- retrying an
-    identical request won't fix it, so fetch_one() should call
-    requests.get() exactly once for this case, not
-    TLE_FETCH_MAX_RETRIES+1 times."""
+    """A bad response is a validation failure, not a transient one, so it is fetched once."""
     call_count = 0
 
     def _get(*args, **kwargs):
@@ -160,17 +128,13 @@ def test_fetch_one_retries_transient_failures(monkeypatch: pytest.MonkeyPatch) -
     assert call_count == 3
 
 
-# ---------------------------------------------------------------------------
-# load_existing_metadata(): graceful handling of the "seeded output
-# directory" refresh-tles.yml prepares before running this script.
-# ---------------------------------------------------------------------------
+# load_existing_metadata()
 
 
 def test_load_existing_metadata_returns_empty_structure_when_file_missing(
     tmp_path: Path,
 ) -> None:
-    """The very first run, before tle-data has ever been published --
-    not an error, just nothing to carry forward."""
+    """The first run, before the branch has been published, has nothing to carry forward."""
     metadata = fetch_tles.load_existing_metadata(tmp_path)
 
     assert metadata == {"generated_at": None, "satellites": {}}
@@ -207,10 +171,7 @@ def test_load_existing_metadata_reads_a_real_previously_published_file(
     assert metadata == previous
 
 
-# ---------------------------------------------------------------------------
-# write_outputs(): the actual publish step, and its core guarantee --
-# a failed satellite's existing file/metadata entry are left alone.
-# ---------------------------------------------------------------------------
+# write_outputs(): a failed satellite keeps its previous file and metadata entry.
 
 
 def test_write_outputs_writes_file_and_metadata_for_a_successful_outcome(
@@ -238,8 +199,6 @@ def test_write_outputs_writes_file_and_metadata_for_a_successful_outcome(
         "tle_epoch": "2026-09-27T04:10:50Z",
         "source_url": "https://example/iss",
     }
-    # Written to disk, not just returned -- a later run reading this
-    # back via load_existing_metadata() must see the same thing.
     on_disk = json.loads((tmp_path / "metadata.json").read_text(encoding="utf-8"))
     assert on_disk == metadata
 
@@ -247,13 +206,7 @@ def test_write_outputs_writes_file_and_metadata_for_a_successful_outcome(
 def test_write_outputs_preserves_existing_file_and_metadata_for_a_failed_satellite(
     tmp_path: Path,
 ) -> None:
-    """
-    The central guarantee this whole publish step exists for: a
-    satellite that fails *this* run must not lose its previously
-    published TLE file or metadata entry -- the orphan-commit publish
-    in refresh-tles.yml republishes exactly what's on disk here, so
-    "leave it alone" is what makes a transient failure non-destructive.
-    """
+    """A failed fetch leaves the previously published file and entry alone."""
     previous_tle_bytes = b"OLD-BEESAT-1-DATA\n1 ...\n2 ...\n"
     (tmp_path / "tle_35933.txt").write_bytes(previous_tle_bytes)
     previous_metadata: dict[str, Any] = {
@@ -278,21 +231,15 @@ def test_write_outputs_preserves_existing_file_and_metadata_for_a_failed_satelli
 
     metadata = fetch_tles.write_outputs(tmp_path, [failed_outcome], previous_metadata, run_time)
 
-    # File untouched.
     assert (tmp_path / "tle_35933.txt").read_bytes() == previous_tle_bytes
-    # Metadata entry carried forward unchanged.
     assert metadata["satellites"]["35933"] == previous_metadata["satellites"]["35933"]
-    # generated_at still advances -- the run happened, even though this
-    # satellite's fetch within it failed.
+    # generated_at still advances: the run happened.
     assert metadata["generated_at"] == "2026-09-28T12:00:00Z"
 
 
 def test_write_outputs_publishes_successes_alongside_preserved_failures(
     tmp_path: Path,
 ) -> None:
-    """A mixed run: one satellite refreshes successfully, another fails
-    and keeps its old file -- both should be reflected correctly in the
-    same metadata.json, not one clobbering the other."""
     (tmp_path / "tle_35933.txt").write_bytes(b"OLD-BEESAT-1-DATA\n")
     previous_metadata: dict[str, Any] = {
         "generated_at": "2026-09-28T00:00:00Z",
@@ -332,9 +279,7 @@ def test_write_outputs_publishes_successes_alongside_preserved_failures(
     assert metadata["satellites"]["35933"] == previous_metadata["satellites"]["35933"]
 
 
-# ---------------------------------------------------------------------------
-# main(): end-to-end exit-code contract.
-# ---------------------------------------------------------------------------
+# main(): exit code is 0 only when every satellite succeeds.
 
 
 def test_main_returns_zero_when_every_satellite_succeeds(
@@ -371,6 +316,5 @@ def test_main_returns_one_when_any_satellite_fails(
     exit_code = fetch_tles.main(["--output-dir", str(tmp_path)])
 
     assert exit_code == 1
-    # The satellite that succeeded is still published even though the
-    # run as a whole is reported as failed.
+    # Whatever succeeded is still published.
     assert (tmp_path / "tle_25544.txt").exists()

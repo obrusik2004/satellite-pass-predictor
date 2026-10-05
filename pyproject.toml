@@ -10,11 +10,8 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "Aleksander Bruski" }]
-# Core deps: what the package's non-app modules (config, tle_data,
-# propagation, time_utils, visibility, visualization, reporting, cli,
-# fetch_tles) and main.py need. sgp4 is pinned explicitly, not just
-# pulled in transitively by skyfield, since which SGP4 implementation
-# is used is a deliberate choice this project's README documents.
+# Core: everything the CLI and the TLE fetch script need. sgp4 is listed explicitly because
+# the propagator is a deliberate choice (docs/DECISIONS.md), not just a skyfield detail.
 dependencies = [
     "skyfield>=1.55,<2",
     "sgp4>=2.27,<3",
@@ -24,16 +21,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Only app.py and the package modules it alone uses (globe.py, skyplot.py)
-# need these -- the CLI and fetch_tles.py don't import them.
+# Needed only by app.py and the modules it alone uses (globe.py, skyplot.py).
 app = [
     "streamlit>=1.64,<2",
     "pydeck>=0.9,<1",
     "plotly>=7.1,<8",
     "pandas>=3.0,<4",
 ]
-# Depends on "app" too: the test suite exercises globe.py/skyplot.py,
-# and mypy type-checks app.py -- a full dev environment needs both.
+# Includes "app": the tests exercise globe.py and skyplot.py, and mypy checks app.py.
 dev = [
     "pytest>=9.1,<10",
     "pytest-cov>=7.1,<8",
@@ -60,12 +55,7 @@ line-length = 100
 extend-exclude = ["venv", "data", "output"]
 
 [tool.ruff.lint]
-# E/F: baseline pycodestyle + pyflakes. I: import sorting. UP: keep
-# syntax current for the pinned Python floor (3.11). B: bugbear --
-# catches real bugs (e.g. mutable default arguments), not just style.
-# SIM: flags needlessly roundabout code. Kept intentionally narrow:
-# stricter sets (docstring/path/exception-message rules, argument-count
-# limits, ...) would force a larger refactor than this pass is for.
+# pycodestyle, pyflakes, isort, pyupgrade, bugbear and flake8-simplify. Kept narrow on purpose.
 select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.mypy]
@@ -76,9 +66,7 @@ warn_redundant_casts = true
 warn_unused_ignores = true
 
 [[tool.mypy.overrides]]
-# skyfield, pydeck, plotly and pandas ship no py.typed marker, so every
-# import from them would otherwise raise an unavoidable "missing library
-# stubs" error unrelated to our own code.
+# These libraries ship no py.typed marker.
 module = ["skyfield.*", "pydeck.*", "plotly.*", "pandas.*"]
 ignore_missing_imports = true
 

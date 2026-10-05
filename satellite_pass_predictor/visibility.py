@@ -1,8 +1,4 @@
-"""
-Visibility: topocentric elevation/azimuth from a ground observer, and
-detecting visibility passes (contiguous stretches above an elevation
-threshold) from that.
-"""
+"""Visibility: look angles from a ground observer, and passes above an elevation mask."""
 
 from typing import TypedDict, cast
 
@@ -13,21 +9,12 @@ from skyfield.timelib import Time, Timescale
 from skyfield.toposlib import GeographicPosition
 
 from .config import MIN_PASS_ELEVATION_DEG, MIN_PASS_SAMPLES_FOR_CONFIDENCE
+from .propagation import FloatOrArray
 from .time_utils import build_time_grid
-
-# See propagation.py's FloatOrArray for why this isn't just `float`:
-# compute_altaz() is called both with a single time (a scalar result)
-# and a vectorized time grid (an array result).
-FloatOrArray = float | NDArray[np.float64]
-
-# TypedDict rather than a dataclass here too -- same reasoning as
-# propagation.py's SubpointDict/GroundTrackDict (see there): these are
-# accessed by string key everywhere they're used, and TypedDict gets
-# precise types with no call-site changes and no runtime change.
 
 
 class AltAzDict(TypedDict):
-    """Topocentric look angles: compute_altaz()'s fixed, known keys."""
+    """Topocentric look angles in degrees, and slant range in km."""
 
     elevation_deg: FloatOrArray
     azimuth_deg: FloatOrArray
@@ -35,7 +22,7 @@ class AltAzDict(TypedDict):
 
 
 class PassDict(TypedDict):
-    """One detected visibility pass: find_passes()'s fixed, known keys."""
+    """One detected pass. The `*_truncated` flags mark values cut off by the window edge."""
 
     start_time: Time
     start_azimuth_deg: float
@@ -51,22 +38,7 @@ class PassDict(TypedDict):
 
 
 def compute_altaz(sat: EarthSatellite, observer: GeographicPosition, t: Time) -> AltAzDict:
-    """
-    Compute a satellite's elevation, azimuth, and range as seen from
-    `observer` at time(s) `t`.
-
-    get_subpoint() answers "where on Earth is the satellite" (geocentric).
-    This answers the different question a ground station actually cares
-    about -- "where do I have to point to see it" -- which needs a
-    topocentric (observer-relative) position instead. `sat - observer`
-    builds that relative geometry; `.at(t)` evaluates it; `.altaz()`
-    converts it into altitude (elevation above the horizon), azimuth
-    (compass bearing), and range, correctly accounting for the observer's
-    position on the WGS84 ellipsoid and Earth's rotation at time `t`.
-
-    Returns a dict of elevation_deg, azimuth_deg, distance_km (arrays if
-    `t` is a vectorized time).
-    """
+    """Return elevation, azimuth and range of `sat` as seen from `observer` at time(s) `t`."""
     topocentric = (sat - observer).at(t)
     alt, az, distance = topocentric.altaz()
     return {
@@ -82,43 +54,18 @@ def find_passes(
     azimuth_deg: NDArray[np.float64],
     min_elevation_deg: float = MIN_PASS_ELEVATION_DEG,
 ) -> list[PassDict]:
-    """
-    Detect visibility passes: contiguous stretches of the sampled time
-    grid where elevation stays at or above `min_elevation_deg`.
+    """Find contiguous runs of samples at or above `min_elevation_deg`.
 
-    Edge cases, handled deliberately rather than left implicit:
+    Start, end and peak are the first, last and highest sample of a run, so they are only
+    accurate to the sampling step. Window edges and short runs are flagged rather than dropped:
 
-    - Pass already in progress at the start of the window (elevation is
-      already above threshold at sample 0): we can't know when it
-      actually rose above the threshold, since that happened before our
-      window starts. Rather than guessing, the pass is reported with
-      start_truncated=True and start_time/start_azimuth taken from
-      sample 0 -- i.e. "first time we can see it", clearly marked as not
-      the true rise time.
-    - Pass still in progress at the end of the window (elevation is still
-      above threshold at the last sample): symmetric handling,
-      end_truncated=True, end_time/end_azimuth taken from the last
-      sample. Additionally, if elevation is still *rising* at that last
-      sample, the true peak lies beyond our window and hasn't been seen
-      yet -- flagged as max_elevation_truncated=True so the reported
-      max_elevation_deg isn't mistaken for the actual peak.
-    - Two threshold crossings only 1-2 samples apart (a pass that barely
-      grazes the threshold): this is not assumed to be sampling noise and
-      silently dropped -- SGP4's output is a smooth, deterministic curve,
-      not a noisy signal, so a genuine brief graze above 10 degrees is a
-      real (if marginal) pass. But with only a couple of samples, we
-      literally cannot resolve *when* within that ~1-minute step the
-      threshold was actually crossed, so the reported start/end/max for
-      such a pass are only accurate to about one sampling step. These are
-      kept in the results but flagged low_confidence=True rather than
-      dropped, with a suggestion to re-run with a finer step_minutes over
-      just that time range to confirm.
+    - Above the mask at the first/last sample: `start_truncated` / `end_truncated`; the true
+      rise/set time is outside the window.
+    - Still rising at the last sample: `max_elevation_truncated`; the true peak is later.
+    - Fewer than MIN_PASS_SAMPLES_FOR_CONFIDENCE samples: `low_confidence`; the pass is real
+      but its times are unresolved within one step.
 
-    Returns a list of dicts, one per detected pass, each with:
-      start_time, start_azimuth_deg, start_truncated
-      end_time, end_azimuth_deg, end_truncated
-      max_elevation_deg, max_elevation_time, max_elevation_truncated
-      duration_minutes, low_confidence
+    `duration_minutes` is the time from the first to the last sample of the run.
     """
     elevation_deg = np.asarray(elevation_deg, dtype=float)
     azimuth_deg = np.asarray(azimuth_deg, dtype=float)
@@ -145,23 +92,7 @@ def find_passes(
         n_samples = end_idx - start_idx + 1
         max_local_idx = start_idx + int(np.argmax(elev_segment))
 
-        # If we were cut off at the end of the window while elevation was
-        # still climbing, the true maximum hasn't been observed yet.
-        #
-        # Wrapped in bool(...) because the last operand of this chain
-        # (elev_segment[-1] > elev_segment[-2]) compares two numpy
-        # float64 scalars, which produces a numpy.bool_ -- and Python's
-        # `and` short-circuits by returning whichever operand it last
-        # evaluated as-is, so without the wrap the whole expression would
-        # be numpy.bool_ instead of the `bool` PassDict declares. Unlike
-        # np.float64 (a genuine subclass of float, so JSON-serializable
-        # as-is), np.bool_ cannot subclass Python's bool -- CPython
-        # doesn't allow subclassing bool at all -- so it's a distinct
-        # type that both fails `is True`/`is False` identity checks and
-        # isn't accepted by json.dumps(). Harmless everywhere this value
-        # is currently only used in truthiness checks (print_passes_table),
-        # but worth fixing at the source before pass data needs to be
-        # serialized (e.g. a future JSON API/Streamlit app).
+        # bool() so a numpy.bool_ doesn't end up in PassDict (it isn't JSON-serializable).
         max_elevation_truncated = bool(
             end_truncated
             and max_local_idx == end_idx
@@ -198,19 +129,10 @@ def compute_passes(
     step_minutes: float = 1,
     min_elevation_deg: float = MIN_PASS_ELEVATION_DEG,
 ) -> list[PassDict]:
-    """
-    Convenience wrapper: build the time grid, compute alt/az across it,
-    and run find_passes() over the result for a single satellite.
-
-    Returns the same list[PassDict] find_passes() returns.
-    """
+    """Sample `sat`'s look angles over a time grid and return its passes (see find_passes)."""
     t = build_time_grid(ts, start_time, duration_hours, step_minutes)
     altaz = compute_altaz(sat, observer, t)
-    # compute_altaz()'s fields are typed float | NDArray because a scalar
-    # `t` would produce scalars -- but `t` here always comes from
-    # build_time_grid(), which always returns a vectorized time, so these
-    # are always arrays in practice. cast() tells mypy that without
-    # changing anything at runtime (it's a no-op).
+    # The grid is always an array, so the scalar half of the union never applies here.
     elevation_deg = cast(NDArray[np.float64], altaz["elevation_deg"])
     azimuth_deg = cast(NDArray[np.float64], altaz["azimuth_deg"])
     return find_passes(

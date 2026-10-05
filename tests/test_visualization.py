@@ -1,19 +1,7 @@
-"""
-Tests for satellite_pass_predictor.visualization.
+"""Tests for satellite_pass_predictor.visualization.
 
-Split by what each group needs:
-
-- test_*_crossing_*/test_exactly_180_* : PURE LOGIC. _split_at_antimeridian()
-  is plain numpy array manipulation -- no TLE, no EarthSatellite, no
-  Skyfield object of any kind.
-- test_print_passes_table_* : PURE LOGIC. Constructs its own
-  passes_by_satellite dicts directly, no TLE/EarthSatellite needed.
-- test_plot_ground_tracks_*/test_build_ground_tracks_figure_* :
-  FIXTURE-BASED. Use the real `iss_satellite` fixture (frozen TLE, no
-  live fetch -- see conftest.py) and actually render a matplotlib figure
-  via a non-interactive backend, since that's what's needed to exercise
-  these functions themselves (as opposed to just the antimeridian-
-  handling logic they both call, tested separately above).
+The antimeridian and table tests are pure logic; the figure tests render with the Agg backend
+using the frozen ISS TLE fixture.
 """
 
 from pathlib import Path
@@ -37,8 +25,6 @@ from satellite_pass_predictor.visualization import (
 
 
 def test_no_crossing_leaves_arrays_unchanged() -> None:
-    """A longitude sequence that never approaches +-180 should pass
-    through with no NaNs inserted and no values changed."""
     longitudes = np.array([10.0, 20.0, 30.0, 40.0])
     latitudes = np.array([1.0, 2.0, 3.0, 4.0])
 
@@ -50,13 +36,7 @@ def test_no_crossing_leaves_arrays_unchanged() -> None:
 
 
 def test_single_crossing_inserts_nan_at_the_jump() -> None:
-    """
-    Longitude jumps from +179 to -179 between index 2 and 3 -- a real
-    ground track crossing the antimeridian, not an actual ~358 degree
-    move. A NaN should be inserted between those two samples (so
-    matplotlib breaks the line there instead of drawing a streak across
-    the whole map), and every other value should be preserved in order.
-    """
+    """A NaN is inserted between the samples either side of the crossing; the rest is intact."""
     longitudes = np.array([170.0, 175.0, 179.0, -179.0, -175.0, -170.0])
     latitudes = np.array([10.0, 11.0, 12.0, 13.0, 14.0, 15.0])
 
@@ -65,20 +45,15 @@ def test_single_crossing_inserts_nan_at_the_jump() -> None:
     assert len(out_lon) == len(longitudes) + 1
     assert len(out_lat) == len(latitudes) + 1
 
-    # everything up to and including the last pre-crossing sample is untouched
     assert np.array_equal(out_lon[:3], [170.0, 175.0, 179.0])
     assert np.array_equal(out_lat[:3], [10.0, 11.0, 12.0])
-    # the break itself
     assert np.isnan(out_lon[3])
     assert np.isnan(out_lat[3])
-    # everything from the first post-crossing sample onward is untouched
     assert np.array_equal(out_lon[4:], [-179.0, -175.0, -170.0])
     assert np.array_equal(out_lat[4:], [13.0, 14.0, 15.0])
 
 
 def test_two_crossings_insert_two_nans() -> None:
-    """A track that wraps, comes back, and wraps again (plausible over a
-    24h/multi-orbit window) should get a break at each crossing."""
     longitudes = np.array([175.0, -175.0, -170.0, 170.0, 175.0])
     latitudes = np.array([0.0, 1.0, 2.0, 3.0, 4.0])
 
@@ -87,19 +62,11 @@ def test_two_crossings_insert_two_nans() -> None:
     assert len(out_lon) == len(longitudes) + 2
     nan_positions = np.where(np.isnan(out_lon))[0]
     assert len(nan_positions) == 2
-    # latitude carries NaN at exactly the same positions as longitude
     assert np.array_equal(nan_positions, np.where(np.isnan(out_lat))[0])
 
 
 def test_exactly_180_degree_jump_is_not_treated_as_a_crossing() -> None:
-    """
-    Locks in the function's actual threshold semantics (`> 180.0`, not
-    `>= 180.0`): a jump of exactly 180 degrees is not split. This isn't
-    a physically expected case (real subpoint longitudes won't usually
-    land on an exact 180 degree step), but it pins down current,
-    deliberate behavior at the boundary so a future change to the
-    comparison operator doesn't silently pass unnoticed.
-    """
+    """Pins the strict `> 180` threshold."""
     longitudes = np.array([0.0, 180.0])
     latitudes = np.array([0.0, 0.0])
 
@@ -112,14 +79,7 @@ def test_exactly_180_degree_jump_is_not_treated_as_a_crossing() -> None:
 def test_print_passes_table_with_no_passes_prints_a_clean_message(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """
-    Confirms already-correct behavior (not a fix -- verified during the
-    robustness audit): a 24h window with zero detected passes for every
-    satellite is a real, unremarkable possibility (unlucky timing/
-    geometry), not an error. The empty-dict-of-empty-lists case should
-    print a clear one-line message, not crash or print an empty/
-    confusing table.
-    """
+    """A window with no passes is normal, so it prints one line instead of an empty table."""
     print_passes_table({"ISS (ZARYA)": [], "MICROSCOPE": []})
 
     output = capsys.readouterr().out
@@ -134,10 +94,7 @@ def _fake_pass(
     max_elevation_truncated: bool = False,
     low_confidence: bool = False,
 ) -> PassDict:
-    """A minimal, valid-shaped PassDict with only the four note flags
-    varied -- build_pass_note_codes() only reads those, but PassDict's
-    TypedDict shape still requires the rest, so they get placeholder
-    values."""
+    """A PassDict with only the four note flags varied and placeholder values elsewhere."""
     t = ts.utc(2026, 1, 1, 0, 0, 0)
     return {
         "start_time": t,
@@ -166,9 +123,6 @@ def test_build_pass_note_codes_each_flag_maps_to_its_own_code(ts: Timescale) -> 
 
 
 def test_build_pass_note_codes_joins_multiple_flags_in_a_fixed_order(ts: Timescale) -> None:
-    """Order should match build_pass_rows()'s own full-text note order
-    (start, end, max-elevation, low-confidence) regardless of the order
-    flags happen to be passed to _fake_pass() here."""
     pass_ = _fake_pass(ts, low_confidence=True, start_truncated=True, end_truncated=True)
 
     assert build_pass_note_codes(pass_) == "IP, CE, LC"
@@ -177,9 +131,7 @@ def test_build_pass_note_codes_joins_multiple_flags_in_a_fixed_order(ts: Timesca
 def test_note_code_legend_covers_every_code_build_pass_note_codes_can_emit(
     ts: Timescale,
 ) -> None:
-    """Guards against the legend (shown in app.py) and the code-emitting
-    logic drifting apart -- e.g. a new flag added to one but not the
-    other."""
+    """The legend and the emitting function must not drift apart."""
     all_flags_pass = _fake_pass(
         ts,
         start_truncated=True,
@@ -196,12 +148,6 @@ def test_note_code_legend_covers_every_code_build_pass_note_codes_can_emit(
 def test_plot_ground_tracks_creates_output_directory_if_missing(
     tmp_path: Path, ts: Timescale, iss_satellite
 ) -> None:
-    """
-    Confirms already-correct behavior (not a fix -- verified during the
-    robustness audit): a completely fresh clone has no output/ directory
-    yet. plot_ground_tracks() should create whatever directory its
-    output_path lives in rather than assuming it already exists.
-    """
     output_path = tmp_path / "does" / "not" / "exist" / "yet" / "tracks.png"
     assert not output_path.parent.exists()
 
@@ -222,14 +168,7 @@ def test_plot_ground_tracks_creates_output_directory_if_missing(
 def test_build_ground_tracks_figure_returns_a_live_unclosed_figure(
     ts: Timescale, iss_satellite
 ) -> None:
-    """
-    build_ground_tracks_figure() exists specifically so a caller (the
-    Streamlit app, via st.pyplot()) can get a usable Figure object --
-    unlike plot_ground_tracks(), which saves and closes it. Checks that
-    the returned figure is actually still open (matplotlib drops closed
-    figures from pyplot's tracked figures) and has one line per
-    satellite plotted.
-    """
+    """Unlike plot_ground_tracks(), the figure is returned still open, with a line per satellite."""
     t0 = ts.utc(2026, 9, 21, 0, 0, 0)
     satellites = {"ISS (ZARYA)": iss_satellite}
 
@@ -244,14 +183,10 @@ def test_build_ground_tracks_figure_returns_a_live_unclosed_figure(
     assert plt.fignum_exists(fig.number)
     assert len(fig.axes) == 1
     assert len(fig.axes[0].lines) == len(satellites)
-    plt.close(fig)  # clean up -- this test intentionally doesn't call plot_ground_tracks()
+    plt.close(fig)
 
 
 def test_each_satellites_line_uses_its_config_color(ts: Timescale, iss_satellite) -> None:
-    """Each satellite's plotted line should be exactly
-    config.SATELLITE_COLORS[name] -- the same mapping the globe, sky
-    plot, and passes table all read -- not matplotlib's own default
-    color cycle."""
     t0 = ts.utc(2026, 9, 21, 0, 0, 0)
     satellites = {"ISS (ZARYA)": iss_satellite}
 
@@ -269,14 +204,6 @@ def test_each_satellites_line_uses_its_config_color(ts: Timescale, iss_satellite
 
 
 def test_figure_and_axes_use_the_dark_theme_background(ts: Timescale, iss_satellite) -> None:
-    """
-    Checked directly (see build_ground_tracks_figure()'s own docstring
-    for the contrast numbers behind this): matplotlib's default white
-    background leaves two of the four SATELLITE_COLORS (light, pastel
-    colors) nearly unreadable, so the figure's background is set to the
-    app's own dark THEME_BACKGROUND_COLOR instead of left at the
-    (light) default.
-    """
     t0 = ts.utc(2026, 9, 21, 0, 0, 0)
     satellites = {"ISS (ZARYA)": iss_satellite}
 

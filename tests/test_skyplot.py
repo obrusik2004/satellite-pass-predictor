@@ -1,14 +1,7 @@
-"""
-Tests for satellite_pass_predictor.skyplot.
+"""Tests for satellite_pass_predictor.skyplot.
 
-Same fixture-based approach as test_visibility.py's
-test_compute_altaz_and_compute_passes_* group: uses the real
-`iss_satellite` fixture (frozen TLE, no live fetch) and the real Kourou
-observer, so a genuine PassDict with genuine start/end times feeds
-build_sky_plot_figure(). Since compute_altaz() is deterministic given a
-fixed satellite/observer/time, the figure's data can be checked against
-an independently-recomputed expected array rather than a hand-picked
-constant -- exact equality, not just "some plausible shape".
+Uses the frozen ISS TLE and the real Kourou observer. Figure data is compared against an
+independently recomputed look-angle array.
 """
 
 import numpy as np
@@ -24,11 +17,7 @@ _ISS_NAME = "ISS (ZARYA)"
 
 
 def _a_real_pass_with_some_duration(ts: Timescale, iss_satellite) -> PassDict:
-    """
-    A genuine detected pass, long enough to have more than one sample --
-    tests that care about a smooth arc (not a single-point edge case)
-    use this rather than risking a single-sample low_confidence graze.
-    """
+    """A detected pass with more than one sample, so the arc isn't a single-point graze."""
     passes = compute_passes(
         iss_satellite,
         KOUROU,
@@ -51,13 +40,6 @@ def _marker_traces(fig):
 def test_track_color_comes_from_the_shared_satellite_color_mapping(
     ts: Timescale, iss_satellite
 ) -> None:
-    """
-    The pass track's line color should be exactly
-    config.SATELLITE_COLORS[satellite_name] -- the same mapping the
-    globe, passes table, and matplotlib figure all read -- not a fixed
-    module-level default, so this satellite's color is identical
-    everywhere this app draws it.
-    """
     pass_ = _a_real_pass_with_some_duration(ts, iss_satellite)
 
     fig = build_sky_plot_figure(iss_satellite, pass_, KOUROU, ts, _ISS_NAME)
@@ -68,20 +50,11 @@ def test_track_color_comes_from_the_shared_satellite_color_mapping(
 def test_radius_is_90_minus_elevation_and_zenith_maps_to_plot_center(
     ts: Timescale, iss_satellite
 ) -> None:
-    """
-    The core convention this whole chart depends on: radius = 90 -
-    elevation, so the highest-elevation sample (closest to zenith) gets
-    the *smallest* radius (closest to the plot's center) and the
-    lowest-elevation sample gets the largest radius (closest to the
-    outer edge) -- inverted from a naive "radius = elevation" mapping.
-    """
+    """Radius is 90 - elevation, so the highest point is nearest the center."""
     pass_ = _a_real_pass_with_some_duration(ts, iss_satellite)
 
     fig = build_sky_plot_figure(iss_satellite, pass_, KOUROU, ts, _ISS_NAME)
 
-    # Recomputed independently, over the same window/step, rather than
-    # trusting build_sky_plot_figure()'s own internals -- same geometry,
-    # same deterministic function, so this must match exactly.
     duration_hours = (pass_["end_time"].tt - pass_["start_time"].tt) * 24.0
     t = build_time_grid(
         ts,
@@ -95,10 +68,6 @@ def test_radius_is_90_minus_elevation_and_zenith_maps_to_plot_center(
     line = _line_trace(fig)
     assert np.allclose(line.r, expected_radius)
     assert np.allclose(line.theta, altaz["azimuth_deg"])
-    # The point nearest the plot's center (smallest radius) is the one
-    # with the highest elevation, not the one with the lowest -- this is
-    # the actual "zenith at center" claim, checked directly rather than
-    # inferred from the formula alone.
     highest_elevation_idx = int(np.argmax(altaz["elevation_deg"]))
     assert int(np.argmin(line.r)) == highest_elevation_idx
 
@@ -106,9 +75,6 @@ def test_radius_is_90_minus_elevation_and_zenith_maps_to_plot_center(
 def test_radial_axis_spans_horizon_to_zenith_with_inverted_labels(
     ts: Timescale, iss_satellite
 ) -> None:
-    """The radial axis covers the full [0, 90] radius range, labeled
-    with the elevation each radius represents -- 90 deg (zenith) at
-    radius 0 (the center), 0 deg (horizon) at radius 90 (the edge)."""
     pass_ = _a_real_pass_with_some_duration(ts, iss_satellite)
 
     fig = build_sky_plot_figure(iss_satellite, pass_, KOUROU, ts, _ISS_NAME)
@@ -122,11 +88,7 @@ def test_radial_axis_spans_horizon_to_zenith_with_inverted_labels(
 def test_angular_axis_uses_compass_convention_not_math_convention(
     ts: Timescale, iss_satellite
 ) -> None:
-    """
-    0 deg azimuth (North) should sit at the top of the chart with angle
-    increasing clockwise through E/S/W -- not Plotly's polar-chart
-    default (0 on the right, increasing counterclockwise).
-    """
+    """North at the top, increasing clockwise."""
     pass_ = _a_real_pass_with_some_duration(ts, iss_satellite)
 
     fig = build_sky_plot_figure(iss_satellite, pass_, KOUROU, ts, _ISS_NAME)
@@ -141,12 +103,6 @@ def test_angular_axis_uses_compass_convention_not_math_convention(
 def test_rise_and_set_markers_present_distinct_and_at_pass_endpoints(
     ts: Timescale, iss_satellite
 ) -> None:
-    """Two marker traces, labeled with standard ground-station terms
-    (AOS/LOS) and visually distinct from each other by shape (not
-    color -- see _RISE_COLOR/_SET_COLOR's own comment for why they're
-    neutral rather than a fixed green/red), positioned at the pass's own
-    recorded start/end azimuth -- so the direction of travel across the
-    sky is clear even without reading the line."""
     pass_ = _a_real_pass_with_some_duration(ts, iss_satellite)
 
     fig = build_sky_plot_figure(iss_satellite, pass_, KOUROU, ts, _ISS_NAME)
@@ -166,13 +122,6 @@ def test_rise_and_set_markers_present_distinct_and_at_pass_endpoints(
 def test_recomputes_at_finer_resolution_than_the_tables_one_minute_grid(
     ts: Timescale, iss_satellite
 ) -> None:
-    """
-    The pass table (app.py) detects passes on a step_minutes=1 grid --
-    too coarse for a smooth-looking arc over a pass that may only last a
-    few minutes. build_sky_plot_figure() should recompute at its own,
-    finer SKY_PLOT_STEP_SECONDS resolution, not just reuse the table's
-    two (start, end) samples or a per-minute grid.
-    """
     pass_ = _a_real_pass_with_some_duration(ts, iss_satellite)
     coarse_sample_count = int(pass_["duration_minutes"]) + 1  # what a 1-min grid would give
 

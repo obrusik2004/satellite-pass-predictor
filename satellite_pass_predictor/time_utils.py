@@ -1,8 +1,4 @@
-"""
-Generic time-grid utilities shared across domain modules. Nothing here is
-specific to orbit propagation or ground-station visibility -- both just
-happen to need "many evenly-spaced instants over the next N hours".
-"""
+"""Time-grid helper shared by propagation and visibility."""
 
 import numpy as np
 from skyfield.timelib import Time, Timescale
@@ -14,15 +10,9 @@ def build_time_grid(
     duration_hours: float = 24,
     step_minutes: float = 1,
 ) -> Time:
-    """
-    Build a single vectorized Skyfield time spanning `duration_hours`
-    starting at `start_time` (default: now), sampled every `step_minutes`.
+    """Return one vectorized Time sampled every `step_minutes` from `start_time` (default: now).
 
-    Shared by the ground-track and pass-prediction steps: both need "many
-    evenly-spaced instants over the next N hours" and both hand the
-    result straight to a function built to vectorize over a time array
-    (get_subpoint(), compute_altaz()) rather than looping per-sample in
-    Python.
+    The first sample is `start_time`; the last is at or before `start_time + duration_hours`.
     """
     if start_time is None:
         start_time = ts.now()

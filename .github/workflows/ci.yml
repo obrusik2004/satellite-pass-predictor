@@ -19,8 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 3.11: the floor this project targets locally. 3.14: what
-        # Streamlit Community Cloud currently runs.
+        # 3.11 is the supported floor; 3.14 is what Streamlit Community Cloud runs.
         python-version: ["3.11", "3.14"]
     steps:
       - uses: actions/checkout@v7
@@ -34,9 +33,7 @@ jobs:
             requirements.txt
 
       - name: Install
-        # Editable install, dev extra (which pulls in the app extra too),
-        # constrained to the exact versions requirements.txt locks --
-        # matches what's actually deployed as closely as pip allows.
+        # The dev extra includes the app extra; requirements.txt pins the deployed versions.
         run: pip install -e ".[dev]" -c requirements.txt
 
       - name: Ruff check

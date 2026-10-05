@@ -1,6 +1,4 @@
-"""Tests for satellite_pass_predictor.colors.hex_to_rgb -- the shared
-hex -> RGB conversion globe.py (pydeck layers) and reporting.py (the
-HTML report's rgba() muted text) both rely on."""
+"""Tests for satellite_pass_predictor.colors.hex_to_rgb."""
 
 from satellite_pass_predictor.colors import hex_to_rgb
 

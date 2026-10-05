@@ -1,18 +1,10 @@
 name: Refresh TLE mirror
 
-# Fetches current TLEs from Celestrak (satellite_pass_predictor/fetch_tles.py) and
-# republishes them on the `tle-data` branch, which the deployed
-# Streamlit app reads instead of fetching from Celestrak itself --
-# Streamlit Community Cloud cannot reach celestrak.org at all (confirmed
-# directly: TCP connect timeouts, not an HTTP-level problem), while this
-# runner can. See README's "Data pipeline" section and
-# satellite_pass_predictor/config.py's TLE_MIRROR_URL comment for the
-# full picture.
+# Fetches TLEs from Celestrak and republishes them on the `tle-data` branch, which the
+# deployed app reads because Streamlit Cloud cannot reach celestrak.org (see docs/DECISIONS.md).
 on:
   schedule:
-    # Every 6 hours, at :17 rather than the top of the hour -- GitHub
-    # explicitly recommends avoiding :00 for scheduled workflows, since
-    # that's when load (and delay) is highest across all of Actions.
+    # Every 6 hours at :17; GitHub advises avoiding :00, when scheduled-workflow load peaks.
     - cron: "17 */6 * * *"
   workflow_dispatch:
 
@@ -21,11 +13,7 @@ permissions:
 
 jobs:
   refresh:
-    # Pinned rather than ubuntu-latest: GitHub has announced ubuntu-latest
-    # will migrate to Ubuntu 26 from 2026-10-19, and this pipeline feeds a
-    # live demo -- a silent runner OS change (e.g. no prebuilt Python 3.11
-    # yet for the new image) must not break it unannounced. Upgrade this
-    # deliberately later, not via a floating label.
+    # Pinned so a runner image change can't break the pipeline unannounced.
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout main (fetch script + package config)
@@ -33,11 +21,7 @@ jobs:
 
       - name: Checkout existing tle-data branch, if it exists
         uses: actions/checkout@v7
-        # Fails on the very first run, before tle-data exists at all --
-        # continue-on-error lets the workflow carry on with an empty
-        # tle/ directory instead of failing here. Any *other* checkout
-        # problem would also be swallowed by this, which is an accepted
-        # trade-off for a small, low-stakes pipeline like this one.
+        # Fails on the first run, before tle-data exists; continue with an empty tle/.
         continue-on-error: true
         with:
           ref: tle-data
@@ -61,10 +45,7 @@ jobs:
           cache-dependency-path: requirements.txt
 
       - name: Install dependencies
-        # Installs the package's core dependencies only (not the "app"
-        # extra) -- everything fetch_tles.py needs -- pinned to the exact
-        # versions requirements.txt locks, via -c, so a PyPI release
-        # newer than what Streamlit Cloud runs can't slip in here.
+        # Core dependencies only (everything fetch_tles needs), pinned to the lock file.
         run: pip install -c requirements.txt .
 
       - name: Fetch TLEs from Celestrak
@@ -73,24 +54,15 @@ jobs:
           set +e
           satpass-fetch-tles --output-dir tle
           echo "exit_code=$?" >> "$GITHUB_OUTPUT"
-        # Runs to completion (exit code captured, not immediately
-        # failing the job) even if some satellites fail -- see the
-        # "Fail the job" step at the end: whatever succeeded must still
-        # be published before the job is allowed to fail.
+        # The exit code is captured so whatever succeeded is published before the job fails.
 
       - name: Publish tle/ to the tle-data branch (single orphan commit)
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
-          # Built in a fresh, throwaway git repo, entirely separate from
-          # the main checkout above -- --orphan starts a new root commit
-          # with no parent/history, and this only ever adds the tle/
-          # directory to it, so tle-data stays a single commit forever
-          # rather than growing with every 6-hourly run. The subsequent
-          # force-push is required (not just convenient): this orphan
-          # commit shares no history with whatever's already on
-          # tle-data, so an ordinary push would be rejected outright.
+          # A fresh orphan commit keeps tle-data at a single commit; the force-push is required
+          # because it shares no history with the existing branch.
           rm -rf _publish
           mkdir _publish
           cp -r tle _publish/tle

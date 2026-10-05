@@ -1,8 +1,4 @@
-"""Tests for satellite_pass_predictor.geo.find_antimeridian_crossings --
-the shared crossing-detection both visualization.py's flat matplotlib
-plot and globe.py's 3D globe build their own (differently-shaped) fixes
-on top of. See those two modules' tests for the actual break/split
-behavior; this only pins down what counts as a crossing at all."""
+"""Tests for satellite_pass_predictor.geo.find_antimeridian_crossings."""
 
 import numpy as np
 
@@ -25,7 +21,6 @@ def test_two_crossings_are_both_found() -> None:
 
 
 def test_exactly_180_degree_jump_is_not_a_crossing() -> None:
-    """Pins down `> 180.0`, not `>= 180.0` -- see the function's own
-    docstring for why this exact boundary is deliberate."""
+    """Pins the strict `> 180.0` threshold."""
     longitudes = np.array([0.0, 180.0])
     assert len(find_antimeridian_crossings(longitudes)) == 0
