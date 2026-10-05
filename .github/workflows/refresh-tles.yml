@@ -8,37 +8,64 @@ on:
     - cron: "17 */6 * * *"
   workflow_dispatch:
 
-permissions:
-  contents: write
+# No default token permissions; the job grants what it needs.
+permissions: {}
+
+# Runs never overlap, so a manual and a scheduled run can't race each other's force-push.
+concurrency:
+  group: tle-refresh
+  cancel-in-progress: false
 
 jobs:
   refresh:
     # Pinned so a runner image change can't break the pipeline unannounced.
     runs-on: ubuntu-24.04
+    # Worst case is about 10 minutes: install, then 4 satellites x 4 attempts x 10s timeouts.
+    timeout-minutes: 15
+    permissions:
+      contents: write
     steps:
       - name: Checkout main (fetch script + package config)
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Checkout existing tle-data branch, if it exists
-        uses: actions/checkout@v7
-        # Fails on the first run, before tle-data exists; continue with an empty tle/.
-        continue-on-error: true
+      - name: Check whether the tle-data branch exists
+        id: branch
+        # Exit code 2 means "no such branch" (first run); any other failure must fail the job.
+        run: |
+          status=0
+          git ls-remote --exit-code --heads origin tle-data > /dev/null || status=$?
+          case "${status}" in
+            0) echo "exists=true" >> "$GITHUB_OUTPUT" ;;
+            2) echo "exists=false" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::git ls-remote failed with exit code ${status}"; exit 1 ;;
+          esac
+
+      - name: Checkout the existing tle-data branch
+        if: steps.branch.outputs.exists == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: tle-data
           path: _tle_data_branch
+          persist-credentials: false
 
       - name: Seed tle/ from the existing tle-data branch, if any
+        env:
+          BRANCH_EXISTS: ${{ steps.branch.outputs.exists }}
         run: |
           mkdir -p tle
-          if [ -d "_tle_data_branch/tle" ]; then
+          if [ "${BRANCH_EXISTS}" = "true" ]; then
+            if [ ! -d "_tle_data_branch/tle" ]; then
+              echo "::error::tle-data exists but has no tle/ directory; refusing to publish over it."
+              exit 1
+            fi
             cp -r _tle_data_branch/tle/. tle/
             echo "Seeded tle/ from the existing tle-data branch."
           else
-            echo "No existing tle-data branch found (first run) -- starting with an empty tle/ directory."
+            echo "No tle-data branch yet (first run) -- starting with an empty tle/ directory."
           fi
 
       - name: Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
           cache: "pip"
@@ -58,6 +85,11 @@ jobs:
 
       - name: Publish tle/ to the tle-data branch (single orphan commit)
         run: |
+          if ! ls tle/tle_*.txt > /dev/null 2>&1; then
+            echo "::error::tle/ contains no TLE files; refusing to publish an empty mirror."
+            exit 1
+          fi
+
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
@@ -71,8 +103,14 @@ jobs:
           git checkout -q --orphan tle-data
           git add tle
           git commit -q -m "Refresh TLE mirror ($(date -u +%Y-%m-%dT%H:%M:%SZ))"
-          git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          git push -q --force origin tle-data
+
+          # Authenticate with an HTTP header, as actions/checkout does, so the token never
+          # appears in the remote URL. The encoded value is not auto-masked, so mask it.
+          auth="$(printf 'x-access-token:%s' "${GITHUB_TOKEN}" | base64 -w0)"
+          echo "::add-mask::${auth}"
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${auth}" \
+            push -q --force origin tle-data
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
