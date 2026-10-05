@@ -1,6 +1,8 @@
 [client]
 # Hides the developer toolbar (deploy button and rerun/clear-cache menu items).
 toolbarMode = "minimal"
+# Visitors see a generic message for uncaught errors instead of a traceback; details stay in server logs.
+showErrorDetails = "none"
 
 # Dark navy theme. The same colors are duplicated in
 # satellite_pass_predictor/config.py for renderers Streamlit's theme can't reach (pydeck,

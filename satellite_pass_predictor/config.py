@@ -70,7 +70,17 @@ TLE_FETCH_TIMEOUT_SECONDS: float = 10.0
 MIRROR_REFRESH_WARNING_HOURS: float = 24.0
 TLE_EPOCH_WARNING_DAYS: float = 5.0
 
-TLE_CACHE_DIR: str = "data"
+# A TLE older than this is refused: after about a month, SGP4 error from unmodeled drag can
+# reach tens of kilometres, so predicted pass times are no longer meaningful.
+TLE_EPOCH_MAX_DAYS: float = 30.0
+
+# The app retries a failed TLE load after this long, instead of caching it for the full hour.
+TLE_FAILED_LOAD_RETRY_SECONDS: int = 60
+
+# Overrides the per-user TLE cache directory.
+CACHE_DIR_ENV_VAR: str = "SATPASS_CACHE_DIR"
+
+# Default CLI output directory, relative to the working directory.
 OUTPUT_DIR: str = "output"
 
 # Guiana Space Centre, Kourou (Wikipedia coordinates). The site spans tens of km and sources

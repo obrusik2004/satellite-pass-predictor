@@ -5,4 +5,4 @@ satellite_pass_predictor.cli.main()."""
 from satellite_pass_predictor.cli import main
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

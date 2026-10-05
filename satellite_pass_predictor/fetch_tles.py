@@ -8,27 +8,13 @@ tle_data.load_satellites()'s `source="mirror"` and config.TLE_MIRROR_URL.
 import argparse
 import json
 import sys
-import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import requests
-from skyfield.iokit import parse_tle_file
-
-from .config import (
-    CELESTRAK_URL,
-    SATELLITES,
-    TLE_FETCH_MAX_RETRIES,
-    TLE_FETCH_RETRY_BASE_DELAY_SECONDS,
-    TLE_FETCH_TIMEOUT_SECONDS,
-)
-
-USER_AGENT = (
-    "satellite-pass-predictor-tle-mirror-refresh/1.0 "
-    "(+https://github.com/obrusik2004/satellite-pass-predictor)"
-)
+from .config import CELESTRAK_URL, SATELLITES
+from .tle_data import fetch_with_retries, validate_tle
 
 _ISO_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 
@@ -49,53 +35,13 @@ class FetchOutcome:
     tle_epoch: datetime | None = None
 
 
-def _fetch_with_retries(url: str) -> bytes:
-    """GET `url` with exponential backoff. Raises OSError with the last
-    error if every attempt fails."""
-    last_error: Exception | None = None
-    for attempt in range(TLE_FETCH_MAX_RETRIES + 1):
-        try:
-            response = requests.get(
-                url,
-                timeout=TLE_FETCH_TIMEOUT_SECONDS,
-                headers={"User-Agent": USER_AGENT},
-            )
-            response.raise_for_status()
-            return response.content
-        except requests.RequestException as e:
-            last_error = e
-            if attempt < TLE_FETCH_MAX_RETRIES:
-                time.sleep(TLE_FETCH_RETRY_BASE_DELAY_SECONDS * (2**attempt))
-    raise OSError(f"cannot fetch {url}: {last_error}") from last_error
-
-
-def _validate_tle(raw: bytes, expected_norad_id: int) -> tuple[bytes, datetime]:
-    """Confirm `raw` is exactly one valid TLE for `expected_norad_id`
-    before anything is written to disk. Returns (raw, epoch); raises
-    ValueError naming the problem otherwise."""
-    entries = list(parse_tle_file(raw.splitlines()))
-    if len(entries) != 1:
-        raise ValueError(
-            f"expected exactly 1 TLE, got {len(entries)} -- the response may "
-            f'be an HTML error page, an empty/"No GP data found" body, or '
-            f"contain more entries than expected"
-        )
-    sat = entries[0]
-    actual_norad_id = sat.model.satnum
-    if actual_norad_id != expected_norad_id:
-        raise ValueError(
-            f"NORAD ID mismatch: requested {expected_norad_id}, response is for {actual_norad_id}"
-        )
-    return raw, sat.epoch.utc_datetime()
-
-
 def fetch_one(name: str, norad_id: int) -> FetchOutcome:
     """Fetch and validate one satellite's TLE. Never raises -- any
     failure is captured in the returned FetchOutcome instead."""
     url = CELESTRAK_URL.format(norad_id=norad_id)
     try:
-        raw = _fetch_with_retries(url)
-        tle_text, tle_epoch = _validate_tle(raw, norad_id)
+        raw = fetch_with_retries(url)
+        tle_text, tle_epoch = validate_tle(raw, norad_id)
     except (OSError, ValueError) as e:
         return FetchOutcome(name=name, norad_id=norad_id, url=url, success=False, error=str(e))
     return FetchOutcome(

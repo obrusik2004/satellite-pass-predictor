@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 import requests
 
-from satellite_pass_predictor import fetch_tles
+from satellite_pass_predictor import fetch_tles, tle_data
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 _ISS_TLE_BYTES = (FIXTURES_DIR / "iss_tle.txt").read_bytes()
@@ -29,7 +29,7 @@ def _fake_response(content: bytes, status_code: int = 200):
 
 
 def test_validate_tle_accepts_a_real_valid_tle() -> None:
-    raw, epoch = fetch_tles._validate_tle(_ISS_TLE_BYTES, _ISS_NORAD_ID)
+    raw, epoch = tle_data.validate_tle(_ISS_TLE_BYTES, _ISS_NORAD_ID)
 
     assert raw == _ISS_TLE_BYTES
     assert epoch.year == 2026
@@ -39,12 +39,12 @@ def test_validate_tle_rejects_an_html_error_page() -> None:
     html = b"<html><body><h1>500 Internal Server Error</h1></body></html>"
 
     with pytest.raises(ValueError, match="expected exactly 1 TLE"):
-        fetch_tles._validate_tle(html, _ISS_NORAD_ID)
+        tle_data.validate_tle(html, _ISS_NORAD_ID)
 
 
 def test_validate_tle_rejects_an_empty_body() -> None:
     with pytest.raises(ValueError, match="expected exactly 1 TLE"):
-        fetch_tles._validate_tle(b"", _ISS_NORAD_ID)
+        tle_data.validate_tle(b"", _ISS_NORAD_ID)
 
 
 def test_validate_tle_rejects_a_mismatched_norad_id() -> None:
@@ -52,7 +52,7 @@ def test_validate_tle_rejects_a_mismatched_norad_id() -> None:
     wrong_norad_id = 99999
 
     with pytest.raises(ValueError, match="NORAD ID mismatch"):
-        fetch_tles._validate_tle(_ISS_TLE_BYTES, wrong_norad_id)
+        tle_data.validate_tle(_ISS_TLE_BYTES, wrong_norad_id)
 
 
 # fetch_one(): never raises; failures are returned in the FetchOutcome.
@@ -60,7 +60,7 @@ def test_validate_tle_rejects_a_mismatched_norad_id() -> None:
 
 def test_fetch_one_succeeds_for_a_valid_response(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        fetch_tles.requests,
+        tle_data.requests,
         "get",
         lambda *a, **k: _fake_response(_ISS_TLE_BYTES),
     )
@@ -75,9 +75,9 @@ def test_fetch_one_succeeds_for_a_valid_response(monkeypatch: pytest.MonkeyPatch
 
 
 def test_fetch_one_fails_on_a_request_exception(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(fetch_tles.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(tle_data.time, "sleep", lambda seconds: None)
     monkeypatch.setattr(
-        fetch_tles.requests,
+        tle_data.requests,
         "get",
         lambda *a, **k: (_ for _ in ()).throw(requests.ConnectionError("refused")),
     )
@@ -100,7 +100,7 @@ def test_fetch_one_fails_on_an_invalid_response_without_retrying(
         call_count += 1
         return _fake_response(b"<html>error</html>")
 
-    monkeypatch.setattr(fetch_tles.requests, "get", _get)
+    monkeypatch.setattr(tle_data.requests, "get", _get)
 
     outcome = fetch_tles.fetch_one("ISS (ZARYA)", _ISS_NORAD_ID)
 
@@ -110,7 +110,7 @@ def test_fetch_one_fails_on_an_invalid_response_without_retrying(
 
 
 def test_fetch_one_retries_transient_failures(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(fetch_tles.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(tle_data.time, "sleep", lambda seconds: None)
     call_count = 0
 
     def _get(*args, **kwargs):
@@ -120,7 +120,7 @@ def test_fetch_one_retries_transient_failures(monkeypatch: pytest.MonkeyPatch) -
             raise requests.Timeout("timed out")
         return _fake_response(_ISS_TLE_BYTES)
 
-    monkeypatch.setattr(fetch_tles.requests, "get", _get)
+    monkeypatch.setattr(tle_data.requests, "get", _get)
 
     outcome = fetch_tles.fetch_one("ISS (ZARYA)", _ISS_NORAD_ID)
 
@@ -287,7 +287,7 @@ def test_main_returns_zero_when_every_satellite_succeeds(
     tmp_path: Path,
 ) -> None:
     monkeypatch.setattr(fetch_tles, "SATELLITES", {"ISS (ZARYA)": _ISS_NORAD_ID})
-    monkeypatch.setattr(fetch_tles.requests, "get", lambda *a, **k: _fake_response(_ISS_TLE_BYTES))
+    monkeypatch.setattr(tle_data.requests, "get", lambda *a, **k: _fake_response(_ISS_TLE_BYTES))
 
     exit_code = fetch_tles.main(["--output-dir", str(tmp_path)])
 
@@ -304,14 +304,14 @@ def test_main_returns_one_when_any_satellite_fails(
         "SATELLITES",
         {"ISS (ZARYA)": _ISS_NORAD_ID, "BEESAT-1": 35933},
     )
-    monkeypatch.setattr(fetch_tles.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(tle_data.time, "sleep", lambda seconds: None)
 
     def _get(url, **kwargs):
         if "25544" in url:
             return _fake_response(_ISS_TLE_BYTES)
         raise requests.ConnectionError("refused")
 
-    monkeypatch.setattr(fetch_tles.requests, "get", _get)
+    monkeypatch.setattr(tle_data.requests, "get", _get)
 
     exit_code = fetch_tles.main(["--output-dir", str(tmp_path)])
 

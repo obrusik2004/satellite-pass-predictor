@@ -49,3 +49,9 @@ Short records of the choices that shape the code: context, decision, consequence
 **Context.** Streamlit Cloud installs from `requirements.txt`, while development and CI install the package.
 **Decision.** `requirements.txt` is the exact lock; `pyproject.toml` declares direct dependencies as ranges in a core set, an `app` extra and a `dev` extra, and CI and the refresh job use the lock as constraints.
 **Consequence.** The refresh job installs only core dependencies, so an unrelated PyPI problem can't fail it, and there is no second hand-maintained list.
+
+## 9. Validate before caching; report failures per satellite
+
+**Context.** A 200 response with an error body used to overwrite a good cache and then count as fresh, and one bad satellite aborted the whole load.
+**Decision.** A response is parsed and checked (one TLE, matching NORAD ID) before an atomic write, a failed refresh falls back to the cache, and `load_satellites` returns the loaded satellites plus a per-satellite failure report. A TLE older than `TLE_EPOCH_MAX_DAYS` or one SGP4 cannot propagate is a failure, not a silent empty result.
+**Consequence.** One satellite's problem shows as a warning naming the satellite and the source while the rest still render, and a poisoned cache heals itself. Only transient errors (connection, timeout, 5xx, 429) are retried.

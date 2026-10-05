@@ -5,12 +5,13 @@ sky plot of the selected pass. No orbital logic lives here. Streamlit reruns thi
 every interaction, so results are always recomputed from the current time.
 """
 
+import html
+from datetime import UTC, datetime, timedelta
 from typing import cast
 
 import pandas as pd
 import streamlit as st
 from skyfield.api import load
-from skyfield.sgp4lib import EarthSatellite
 
 from satellite_pass_predictor.config import (
     AUTHOR_NAME,
@@ -31,12 +32,14 @@ from satellite_pass_predictor.config import (
     TIME_WINDOW_MAX_HOURS,
     TIME_WINDOW_MIN_HOURS,
     TLE_EPOCH_WARNING_DAYS,
+    TLE_FAILED_LOAD_RETRY_SECONDS,
     TLE_MIRROR_CACHE_AGE_HOURS,
 )
 from satellite_pass_predictor.globe import build_globe_deck
 from satellite_pass_predictor.propagation import GroundTrackDict, compute_ground_track
 from satellite_pass_predictor.skyplot import build_sky_plot_figure
 from satellite_pass_predictor.tle_data import (
+    TLELoadResult,
     TLEMirrorMetadata,
     compute_staleness_warnings,
     fetch_mirror_metadata,
@@ -69,8 +72,8 @@ st.markdown(
         margin: 0.4rem 0;
     }}
     .pp-header {{
-        background: {THEME_PANEL_COLOR};
-        border: 1px solid {THEME_BORDER_COLOR};
+        background: {html.escape(THEME_PANEL_COLOR)};
+        border: 1px solid {html.escape(THEME_BORDER_COLOR)};
         border-radius: 0.5rem;
         padding: 1.1rem 1.75rem;
         margin-bottom: 1.5rem;
@@ -84,7 +87,7 @@ st.markdown(
     }}
     .pp-header p {{
         margin: 0;
-        color: {THEME_TEXT_COLOR};
+        color: {html.escape(THEME_TEXT_COLOR)};
         opacity: 0.75;
         font-size: 0.95rem;
     }}
@@ -169,7 +172,7 @@ def _render_globe(
 # The TTL matches the mirror's own cache age so a refresh reaches users within about an hour.
 # Always loads every satellite so changing the selection never reloads.
 @st.cache_resource(ttl=int(TLE_MIRROR_CACHE_AGE_HOURS * 60 * 60))
-def _load_all_satellites() -> dict[str, EarthSatellite]:
+def _load_all_satellites() -> TLELoadResult:
     return load_satellites(source="mirror")
 
 
@@ -217,15 +220,35 @@ if not selected_names:
     st.info("Select at least one satellite to see its ground track and passes.")
     st.stop()
 
-all_satellites = _load_all_satellites()
-satellites = {name: all_satellites[name] for name in selected_names}
+load_result = _load_all_satellites()
+# A failed load is retried after a short delay instead of being cached for the full TTL.
+if load_result.failures and datetime.now(UTC) - load_result.loaded_at > timedelta(
+    seconds=TLE_FAILED_LOAD_RETRY_SECONDS
+):
+    _load_all_satellites.clear()
+    load_result = _load_all_satellites()
+
+failure_list = "\n".join(f"- **{f.name}**: {f.reason}" for f in load_result.failures.values())
+if not load_result.satellites:
+    st.error(f"No satellite data could be loaded, so there is nothing to show:\n\n{failure_list}")
+    st.stop()
+if load_result.failures:
+    st.warning(f"Some satellites could not be loaded and are not shown:\n\n{failure_list}")
+for notice in load_result.warnings.values():
+    st.warning(notice)
+
+selected_names = [name for name in selected_names if name in load_result.satellites]
+if not selected_names:
+    st.info("None of the selected satellites could be loaded.")
+    st.stop()
+satellites = {name: load_result.satellites[name] for name in selected_names}
 
 with st.sidebar:
     st.markdown("**Satellites shown**")
     for name in selected_names:
         st.markdown(
-            f'<span class="pp-legend-dot" style="background: {SATELLITE_COLORS[name]};">'
-            f"</span>{name}",
+            f'<span class="pp-legend-dot" style="background: '
+            f'{html.escape(SATELLITE_COLORS[name])};"></span>{html.escape(name)}',
             unsafe_allow_html=True,
         )
 
@@ -257,18 +280,19 @@ with st.sidebar:
     )
     st.caption(f"TLE epoch age -- {epoch_ages}")
 
-    # Raw HTML is safe here: every value is a constant from config.py.
-    footer_links = [f'<a href="{GITHUB_REPO_URL}" target="_blank">GitHub</a>']
+    github_url = html.escape(GITHUB_REPO_URL)
+    footer_links = [f'<a href="{github_url}" target="_blank">GitHub</a>']
     if LINKEDIN_URL:
-        footer_links.append(f'<a href="{LINKEDIN_URL}" target="_blank">LinkedIn</a>')
+        footer_links.append(f'<a href="{html.escape(LINKEDIN_URL)}" target="_blank">LinkedIn</a>')
+    author = html.escape(AUTHOR_NAME)
     st.divider()
     st.markdown(
         f"""
         <div class="pp-footer">
-          Built by {AUTHOR_NAME} &middot; {" &middot; ".join(footer_links)}<br>
+          Built by {author} &middot; {" &middot; ".join(footer_links)}<br>
           Orbital data: CelesTrak &middot; Basemap: Natural Earth<br>
           Independent project, not affiliated with ESA<br>
-          &copy; {COPYRIGHT_YEAR} {AUTHOR_NAME}
+          &copy; {COPYRIGHT_YEAR} {author}
         </div>
         """,
         unsafe_allow_html=True,
