@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.11: the floor this project targets locally. 3.14: what
+        # Streamlit Community Cloud currently runs.
+        python-version: ["3.11", "3.14"]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+          cache-dependency-path: |
+            pyproject.toml
+            requirements.txt
+
+      - name: Install
+        # Editable install, dev extra (which pulls in the app extra too),
+        # constrained to the exact versions requirements.txt locks --
+        # matches what's actually deployed as closely as pip allows.
+        run: pip install -e ".[dev]" -c requirements.txt
+
+      - name: Ruff check
+        run: ruff check .
+
+      - name: Ruff format --check
+        run: ruff format --check .
+
+      - name: mypy
+        run: mypy app.py main.py satellite_pass_predictor tests
+
+      - name: pytest
+        run: pytest --cov=satellite_pass_predictor --cov-report=term-missing

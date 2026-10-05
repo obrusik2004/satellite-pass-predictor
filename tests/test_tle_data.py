@@ -160,7 +160,8 @@ def test_falls_back_to_cache_when_fetch_fails_but_cache_exists(
     monkeypatch.setattr(tle_data.load, "days_old", lambda filename: 3.0)
     monkeypatch.setattr(tle_data.time, "sleep", lambda seconds: None)
     monkeypatch.setattr(
-        tle_data.requests, "get",
+        tle_data.requests,
+        "get",
         MagicMock(side_effect=requests.ConnectionError("503 Service Unavailable")),
     )
     # The fallback read (load.tle_file(filename), no reload/url) is
@@ -191,8 +192,11 @@ def test_reraises_with_actionable_message_when_fetch_fails_and_no_cache_exists(
     monkeypatch.setattr(tle_data.load, "exists", lambda filename: False)
     monkeypatch.setattr(tle_data.time, "sleep", lambda seconds: None)
     monkeypatch.setattr(
-        tle_data.requests, "get",
-        MagicMock(side_effect=requests.ConnectionError("<urlopen error [Errno 11001] getaddrinfo failed>")),
+        tle_data.requests,
+        "get",
+        MagicMock(
+            side_effect=requests.ConnectionError("<urlopen error [Errno 11001] getaddrinfo failed>")
+        ),
     )
 
     with pytest.raises(OSError) as exc_info:
@@ -435,7 +439,8 @@ def test_mirror_source_fetches_from_the_mirror_url(
 
 
 def test_mirror_source_uses_its_own_much_shorter_cache_age(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     """
     A cache age exactly between the mirror's short threshold and
@@ -474,7 +479,8 @@ def test_mirror_source_error_message_points_at_the_refresh_workflow(
     monkeypatch.setattr(tle_data.load, "exists", lambda filename: False)
     monkeypatch.setattr(tle_data.time, "sleep", lambda seconds: None)
     monkeypatch.setattr(
-        tle_data.requests, "get",
+        tle_data.requests,
+        "get",
         MagicMock(side_effect=requests.ConnectionError("404 Not Found")),
     )
 
@@ -494,14 +500,14 @@ def test_mirror_source_error_message_points_at_the_refresh_workflow(
 
 
 def test_is_older_than_false_when_well_within_max_age() -> None:
-    now = tle_data.datetime(2026, 9, 28, 12, 0, 0, tzinfo=tle_data.timezone.utc)
+    now = tle_data.datetime(2026, 9, 28, 12, 0, 0, tzinfo=tle_data.UTC)
     reference_time = now - tle_data.timedelta(hours=1)
 
     assert tle_data.is_older_than(reference_time, tle_data.timedelta(hours=24), now=now) is False
 
 
 def test_is_older_than_true_when_well_past_max_age() -> None:
-    now = tle_data.datetime(2026, 9, 28, 12, 0, 0, tzinfo=tle_data.timezone.utc)
+    now = tle_data.datetime(2026, 9, 28, 12, 0, 0, tzinfo=tle_data.UTC)
     reference_time = now - tle_data.timedelta(hours=48)
 
     assert tle_data.is_older_than(reference_time, tle_data.timedelta(hours=24), now=now) is True
@@ -510,14 +516,14 @@ def test_is_older_than_true_when_well_past_max_age() -> None:
 def test_is_older_than_boundary_exactly_at_max_age_is_not_yet_stale() -> None:
     """Exactly at the threshold should not (yet) count as stale -- the
     comparison is a strict `>`, not `>=`."""
-    now = tle_data.datetime(2026, 9, 28, 12, 0, 0, tzinfo=tle_data.timezone.utc)
+    now = tle_data.datetime(2026, 9, 28, 12, 0, 0, tzinfo=tle_data.UTC)
     reference_time = now - tle_data.timedelta(hours=24)
 
     assert tle_data.is_older_than(reference_time, tle_data.timedelta(hours=24), now=now) is False
 
 
 def test_is_older_than_boundary_one_second_past_max_age_is_stale() -> None:
-    now = tle_data.datetime(2026, 9, 28, 12, 0, 0, tzinfo=tle_data.timezone.utc)
+    now = tle_data.datetime(2026, 9, 28, 12, 0, 0, tzinfo=tle_data.UTC)
     reference_time = now - tle_data.timedelta(hours=24, seconds=1)
 
     assert tle_data.is_older_than(reference_time, tle_data.timedelta(hours=24), now=now) is True
@@ -527,7 +533,7 @@ def test_is_older_than_uses_the_real_current_time_when_now_not_given() -> None:
     """Without an explicit `now`, this should compare against the actual
     wall clock -- checked with a reference_time far enough in the past
     that the result is unambiguous regardless of when the test runs."""
-    long_ago = tle_data.datetime(2000, 1, 1, tzinfo=tle_data.timezone.utc)
+    long_ago = tle_data.datetime(2000, 1, 1, tzinfo=tle_data.UTC)
 
     assert tle_data.is_older_than(long_ago, tle_data.timedelta(days=1)) is True
 
@@ -546,8 +552,10 @@ def test_fetch_mirror_metadata_returns_parsed_data_on_success(
         "generated_at": "2026-09-28T09:00:00Z",
         "satellites": {
             "99999": {
-                "name": "TESTSAT", "fetched_at": "2026-09-28T09:00:03Z",
-                "tle_epoch": "2026-09-27T18:00:00Z", "source_url": "https://example/",
+                "name": "TESTSAT",
+                "fetched_at": "2026-09-28T09:00:03Z",
+                "tle_epoch": "2026-09-27T18:00:00Z",
+                "source_url": "https://example/",
             },
         },
     }
@@ -565,7 +573,8 @@ def test_fetch_mirror_metadata_returns_none_on_request_exception(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        tle_data.requests, "get",
+        tle_data.requests,
+        "get",
         MagicMock(side_effect=requests.ConnectionError("refused")),
     )
 
@@ -619,7 +628,7 @@ def test_fetch_mirror_metadata_returns_none_on_unexpected_shape(
 def test_parse_iso_utc_parses_a_real_metadata_timestamp() -> None:
     parsed = tle_data.parse_iso_utc("2026-09-28T09:00:03Z")
 
-    assert parsed == tle_data.datetime(2026, 9, 28, 9, 0, 3, tzinfo=tle_data.timezone.utc)
+    assert parsed == tle_data.datetime(2026, 9, 28, 9, 0, 3, tzinfo=tle_data.UTC)
 
 
 def test_parse_iso_utc_returns_none_for_garbage() -> None:
@@ -637,7 +646,7 @@ def _metadata_generated_at(timestamp: str) -> tle_data.TLEMirrorMetadata:
 
 
 def test_no_warnings_when_mirror_and_all_epochs_are_fresh() -> None:
-    now = tle_data.datetime(2026, 9, 28, 12, 0, 0, tzinfo=tle_data.timezone.utc)
+    now = tle_data.datetime(2026, 9, 28, 12, 0, 0, tzinfo=tle_data.UTC)
     metadata = _metadata_generated_at("2026-09-28T11:00:00Z")  # 1h old
     epochs = {"ISS (ZARYA)": now - tle_data.timedelta(days=1)}  # 1 day old
 
@@ -647,7 +656,7 @@ def test_no_warnings_when_mirror_and_all_epochs_are_fresh() -> None:
 
 
 def test_mirror_stale_when_generated_at_older_than_warning_threshold() -> None:
-    now = tle_data.datetime(2026, 9, 28, 12, 0, 0, tzinfo=tle_data.timezone.utc)
+    now = tle_data.datetime(2026, 9, 28, 12, 0, 0, tzinfo=tle_data.UTC)
     metadata = _metadata_generated_at("2026-09-25T12:00:00Z")  # 3 days old
 
     result = tle_data.compute_staleness_warnings(metadata, {}, now=now)
@@ -656,32 +665,36 @@ def test_mirror_stale_when_generated_at_older_than_warning_threshold() -> None:
 
 
 def test_mirror_stale_is_false_not_true_when_metadata_is_none() -> None:
-    """"Provenance unavailable" and "confirmed stale" are different
+    """ "Provenance unavailable" and "confirmed stale" are different
     claims -- app.py shows a separate message for the None case rather
     than this warning firing on missing data."""
-    result = tle_data.compute_staleness_warnings(None, {}, now=tle_data.datetime.now(tle_data.timezone.utc))
+    result = tle_data.compute_staleness_warnings(None, {}, now=tle_data.datetime.now(tle_data.UTC))
 
     assert result["mirror_stale"] is False
 
 
 def test_satellite_flagged_stale_when_its_epoch_is_old_but_others_are_not() -> None:
-    now = tle_data.datetime(2026, 9, 28, 12, 0, 0, tzinfo=tle_data.timezone.utc)
+    now = tle_data.datetime(2026, 9, 28, 12, 0, 0, tzinfo=tle_data.UTC)
     epochs = {
         "ISS (ZARYA)": now - tle_data.timedelta(days=1),
         "OLDSAT": now - tle_data.timedelta(days=10),
     }
 
-    result = tle_data.compute_staleness_warnings(_metadata_generated_at("2026-09-28T11:00:00Z"), epochs, now=now)
+    result = tle_data.compute_staleness_warnings(
+        _metadata_generated_at("2026-09-28T11:00:00Z"), epochs, now=now
+    )
 
     assert result["stale_satellite_names"] == ["OLDSAT"]
 
 
 def test_compute_staleness_warnings_boundary_exactly_at_threshold_is_not_stale() -> None:
-    now = tle_data.datetime(2026, 9, 28, 12, 0, 0, tzinfo=tle_data.timezone.utc)
+    now = tle_data.datetime(2026, 9, 28, 12, 0, 0, tzinfo=tle_data.UTC)
     exactly_at_threshold = now - tle_data.timedelta(hours=tle_data.MIRROR_REFRESH_WARNING_HOURS)
 
     result = tle_data.compute_staleness_warnings(
-        _metadata_generated_at(exactly_at_threshold.strftime("%Y-%m-%dT%H:%M:%SZ")), {}, now=now,
+        _metadata_generated_at(exactly_at_threshold.strftime("%Y-%m-%dT%H:%M:%SZ")),
+        {},
+        now=now,
     )
 
     assert result["mirror_stale"] is False

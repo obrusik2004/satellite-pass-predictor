@@ -127,8 +127,11 @@ def build_ground_tracks_figure(
 
     for name, sat in satellites.items():
         track = compute_ground_track(
-            sat, ts, start_time=start_time,
-            duration_hours=duration_hours, step_minutes=step_minutes,
+            sat,
+            ts,
+            start_time=start_time,
+            duration_hours=duration_hours,
+            step_minutes=step_minutes,
         )
         # track's lat/lon fields are typed float | NDArray (see
         # propagation.FloatOrArray), but compute_ground_track() is always
@@ -155,7 +158,12 @@ def build_ground_tracks_figure(
     ax.tick_params(colors=THEME_TEXT_COLOR)
     for spine in ax.spines.values():
         spine.set_color(THEME_BORDER_COLOR)
-    legend = ax.legend(loc="upper right", fontsize=8, facecolor=THEME_BACKGROUND_COLOR, edgecolor=THEME_BORDER_COLOR)
+    legend = ax.legend(
+        loc="upper right",
+        fontsize=8,
+        facecolor=THEME_BACKGROUND_COLOR,
+        edgecolor=THEME_BORDER_COLOR,
+    )
     for text in legend.get_texts():
         text.set_color(THEME_TEXT_COLOR)
     fig.tight_layout()
@@ -182,8 +190,11 @@ def plot_ground_tracks(
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
 
     fig = build_ground_tracks_figure(
-        satellites, ts, start_time=start_time,
-        duration_hours=duration_hours, step_minutes=step_minutes,
+        satellites,
+        ts,
+        start_time=start_time,
+        duration_hours=duration_hours,
+        step_minutes=step_minutes,
     )
     fig.savefig(output_path, dpi=150)
     plt.close(fig)
@@ -246,20 +257,22 @@ def build_pass_rows(
             if p["low_confidence"]:
                 notes.append("LOW CONFIDENCE (rerun with finer step)")
 
-            rows.append({
-                "satellite": name,
-                "start": p["start_time"].utc_strftime("%Y-%m-%d %H:%M:%S"),
-                "start_az": f"{p['start_azimuth_deg']:.1f}",
-                "max_elev": f"{p['max_elevation_deg']:.1f}",
-                "max_elev_time": p["max_elevation_time"].utc_strftime("%H:%M:%S"),
-                "end": p["end_time"].utc_strftime("%Y-%m-%d %H:%M:%S"),
-                "end_az": f"{p['end_azimuth_deg']:.1f}",
-                "duration_min": f"{p['duration_minutes']:.1f}",
-                "notes": ", ".join(notes),
-                "_sort_key": p["start_time"],
-                "_satellite": name,
-                "_pass": p,
-            })
+            rows.append(
+                {
+                    "satellite": name,
+                    "start": p["start_time"].utc_strftime("%Y-%m-%d %H:%M:%S"),
+                    "start_az": f"{p['start_azimuth_deg']:.1f}",
+                    "max_elev": f"{p['max_elevation_deg']:.1f}",
+                    "max_elev_time": p["max_elevation_time"].utc_strftime("%H:%M:%S"),
+                    "end": p["end_time"].utc_strftime("%Y-%m-%d %H:%M:%S"),
+                    "end_az": f"{p['end_azimuth_deg']:.1f}",
+                    "duration_min": f"{p['duration_minutes']:.1f}",
+                    "notes": ", ".join(notes),
+                    "_sort_key": p["start_time"],
+                    "_satellite": name,
+                    "_pass": p,
+                }
+            )
 
     rows.sort(key=lambda r: cast(Time, r["_sort_key"]))
     return rows

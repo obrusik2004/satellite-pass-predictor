@@ -1,6 +1,6 @@
 name: Refresh TLE mirror
 
-# Fetches current TLEs from Celestrak (scripts/fetch_tles.py) and
+# Fetches current TLEs from Celestrak (satellite_pass_predictor/fetch_tles.py) and
 # republishes them on the `tle-data` branch, which the deployed
 # Streamlit app reads instead of fetching from Celestrak itself --
 # Streamlit Community Cloud cannot reach celestrak.org at all (confirmed
@@ -58,16 +58,20 @@ jobs:
         with:
           python-version: "3.11"
           cache: "pip"
-          cache-dependency-path: requirements-fetch.txt
+          cache-dependency-path: requirements.txt
 
       - name: Install dependencies
-        run: pip install -r requirements-fetch.txt
+        # Installs the package's core dependencies only (not the "app"
+        # extra) -- everything fetch_tles.py needs -- pinned to the exact
+        # versions requirements.txt locks, via -c, so a PyPI release
+        # newer than what Streamlit Cloud runs can't slip in here.
+        run: pip install -c requirements.txt .
 
       - name: Fetch TLEs from Celestrak
         id: fetch
         run: |
           set +e
-          python scripts/fetch_tles.py --output-dir tle
+          satpass-fetch-tles --output-dir tle
           echo "exit_code=$?" >> "$GITHUB_OUTPUT"
         # Runs to completion (exit code captured, not immediately
         # failing the job) even if some satellites fail -- see the

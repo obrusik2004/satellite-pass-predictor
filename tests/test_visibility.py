@@ -39,8 +39,10 @@ def _synthetic_time_grid(ts: Timescale, n_samples: int):
     that only care about find_passes()'s index/threshold logic and need
     *some* real Skyfield Time to index into and subtract."""
     return build_time_grid(
-        ts, start_time=ts.utc(2026, 1, 1, 0, 0, 0),
-        duration_hours=(n_samples - 1) / 60, step_minutes=1,
+        ts,
+        start_time=ts.utc(2026, 1, 1, 0, 0, 0),
+        duration_hours=(n_samples - 1) / 60,
+        step_minutes=1,
     )
 
 
@@ -199,7 +201,9 @@ def test_compute_altaz_returns_physically_valid_ranges(ts: Timescale, iss_satell
     within their physically valid ranges -- this would catch e.g. a
     swapped alt/az, a radians-vs-degrees bug, or a sign error.
     """
-    t = build_time_grid(ts, start_time=ts.utc(2026, 9, 21, 0, 0, 0), duration_hours=24, step_minutes=5)
+    t = build_time_grid(
+        ts, start_time=ts.utc(2026, 9, 21, 0, 0, 0), duration_hours=24, step_minutes=5
+    )
     altaz = compute_altaz(iss_satellite, KOUROU, t)
 
     assert np.all(altaz["elevation_deg"] >= -90.0) and np.all(altaz["elevation_deg"] <= 90.0)
@@ -217,7 +221,9 @@ def test_compute_passes_detects_at_least_one_pass_in_a_week(ts: Timescale, iss_s
     value assertions on the underlying logic.
     """
     t0 = ts.utc(2026, 9, 21, 0, 0, 0)
-    passes = compute_passes(iss_satellite, KOUROU, ts, start_time=t0, duration_hours=24 * 7, step_minutes=1)
+    passes = compute_passes(
+        iss_satellite, KOUROU, ts, start_time=t0, duration_hours=24 * 7, step_minutes=1
+    )
 
     assert len(passes) > 0
     for p in passes:

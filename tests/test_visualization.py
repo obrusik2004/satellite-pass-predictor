@@ -181,8 +181,11 @@ def test_note_code_legend_covers_every_code_build_pass_note_codes_can_emit(
     logic drifting apart -- e.g. a new flag added to one but not the
     other."""
     all_flags_pass = _fake_pass(
-        ts, start_truncated=True, end_truncated=True,
-        max_elevation_truncated=True, low_confidence=True,
+        ts,
+        start_truncated=True,
+        end_truncated=True,
+        max_elevation_truncated=True,
+        low_confidence=True,
     )
     emitted_codes = set(build_pass_note_codes(all_flags_pass).split(", "))
     legend_codes = {code for code, _ in NOTE_CODE_LEGEND}
@@ -204,8 +207,12 @@ def test_plot_ground_tracks_creates_output_directory_if_missing(
 
     t0 = ts.utc(2026, 9, 21, 0, 0, 0)
     result = plot_ground_tracks(
-        {"ISS (ZARYA)": iss_satellite}, ts, start_time=t0,
-        duration_hours=1, step_minutes=30, output_path=str(output_path),
+        {"ISS (ZARYA)": iss_satellite},
+        ts,
+        start_time=t0,
+        duration_hours=1,
+        step_minutes=30,
+        output_path=str(output_path),
     )
 
     assert result == str(output_path)
@@ -227,7 +234,11 @@ def test_build_ground_tracks_figure_returns_a_live_unclosed_figure(
     satellites = {"ISS (ZARYA)": iss_satellite}
 
     fig = build_ground_tracks_figure(
-        satellites, ts, start_time=t0, duration_hours=1, step_minutes=30,
+        satellites,
+        ts,
+        start_time=t0,
+        duration_hours=1,
+        step_minutes=30,
     )
 
     assert plt.fignum_exists(fig.number)
@@ -245,7 +256,11 @@ def test_each_satellites_line_uses_its_config_color(ts: Timescale, iss_satellite
     satellites = {"ISS (ZARYA)": iss_satellite}
 
     fig = build_ground_tracks_figure(
-        satellites, ts, start_time=t0, duration_hours=1, step_minutes=30,
+        satellites,
+        ts,
+        start_time=t0,
+        duration_hours=1,
+        step_minutes=30,
     )
 
     line = fig.axes[0].lines[0]
@@ -266,7 +281,11 @@ def test_figure_and_axes_use_the_dark_theme_background(ts: Timescale, iss_satell
     satellites = {"ISS (ZARYA)": iss_satellite}
 
     fig = build_ground_tracks_figure(
-        satellites, ts, start_time=t0, duration_hours=1, step_minutes=30,
+        satellites,
+        ts,
+        start_time=t0,
+        duration_hours=1,
+        step_minutes=30,
     )
 
     assert to_rgb(fig.get_facecolor()) == to_rgb(THEME_BACKGROUND_COLOR)

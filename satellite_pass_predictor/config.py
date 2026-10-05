@@ -88,10 +88,7 @@ THEME_TEXT_COLOR: str = "#EAF2F5"
 # satellite track or a selection highlight.
 KOUROU_MARKER_COLOR: str = "#FFFFFF"
 
-CELESTRAK_URL: str = (
-    "https://celestrak.org/NORAD/elements/gp.php"
-    "?CATNR={norad_id}&FORMAT=TLE"
-)
+CELESTRAK_URL: str = "https://celestrak.org/NORAD/elements/gp.php?CATNR={norad_id}&FORMAT=TLE"
 
 # Streamlit Community Cloud's outbound network cannot reach celestrak.org
 # at all -- confirmed directly (TCP connect timeouts, not an HTTP error

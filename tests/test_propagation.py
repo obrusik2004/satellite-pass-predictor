@@ -64,7 +64,9 @@ def test_ground_track_latitude_stays_within_inclination_envelope(
     geodetic_vs_geocentric_tolerance_deg = 0.5  # comfortably covers the ~0.19 deg max
 
     t0 = ts.utc(*FIXED_TIME_ARGS)
-    track = compute_ground_track(iss_satellite, ts, start_time=t0, duration_hours=24, step_minutes=1)
+    track = compute_ground_track(
+        iss_satellite, ts, start_time=t0, duration_hours=24, step_minutes=1
+    )
 
     max_abs_latitude = np.max(np.abs(track["latitude_deg"]))
     assert max_abs_latitude <= inclination_deg + geodetic_vs_geocentric_tolerance_deg
@@ -77,7 +79,9 @@ def test_ground_track_shape_matches_requested_grid(ts: Timescale, iss_satellite)
     should agree on that length.
     """
     t0 = ts.utc(*FIXED_TIME_ARGS)
-    track = compute_ground_track(iss_satellite, ts, start_time=t0, duration_hours=24, step_minutes=1)
+    track = compute_ground_track(
+        iss_satellite, ts, start_time=t0, duration_hours=24, step_minutes=1
+    )
 
     # latitude/longitude/altitude are typed float | NDArray (see
     # propagation.FloatOrArray) since get_subpoint() can be called with a
@@ -99,7 +103,9 @@ def test_ground_track_longitude_stays_in_valid_range(ts: Timescale, iss_satellit
     handle a +180/-180 wraparound, not e.g. a 0-360 convention.
     """
     t0 = ts.utc(*FIXED_TIME_ARGS)
-    track = compute_ground_track(iss_satellite, ts, start_time=t0, duration_hours=24, step_minutes=1)
+    track = compute_ground_track(
+        iss_satellite, ts, start_time=t0, duration_hours=24, step_minutes=1
+    )
 
     assert np.all(track["longitude_deg"] > -180.0)
     assert np.all(track["longitude_deg"] <= 180.0)

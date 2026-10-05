@@ -5,7 +5,7 @@ for the tracked satellites from Celestrak.
 
 import os
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Literal, TypedDict, cast
 
 import requests
@@ -90,9 +90,7 @@ def _download_and_cache_tle(url: str, filename: str) -> list[EarthSatellite]:
     return list(parse_tle_file(response.content.splitlines()))
 
 
-def _fetch_tle_with_retries(
-    url: str, filename: str, reload: bool
-) -> list[EarthSatellite]:
+def _fetch_tle_with_retries(url: str, filename: str, reload: bool) -> list[EarthSatellite]:
     """
     The actual network fetch (via _download_and_cache_tle(), not the
     reading-a-local-file fallback load_satellites() uses when this is
@@ -132,7 +130,7 @@ def _fetch_tle_with_retries(
         try:
             return _download_and_cache_tle(url, filename)
         except OSError:
-            time.sleep(TLE_FETCH_RETRY_BASE_DELAY_SECONDS * (2 ** attempt))
+            time.sleep(TLE_FETCH_RETRY_BASE_DELAY_SECONDS * (2**attempt))
     return _download_and_cache_tle(url, filename)
 
 
@@ -181,10 +179,7 @@ def load_satellites(
         url = url_template.format(norad_id=norad_id)
         filename = os.path.join(TLE_CACHE_DIR, f"tle_{norad_id}.txt")
 
-        stale = (
-            not load.exists(filename)
-            or load.days_old(filename) > max_age_days
-        )
+        stale = not load.exists(filename) or load.days_old(filename) > max_age_days
         try:
             entries = _fetch_tle_with_retries(url, filename, reload=stale)
         except OSError as e:
@@ -251,6 +246,7 @@ def load_satellites(
 class TLESatelliteMetadata(TypedDict):
     """One satellite's entry in the mirror's metadata.json (see
     scripts/fetch_tles.py, which writes this file)."""
+
     name: str
     fetched_at: str  # ISO 8601 UTC -- last time this satellite's fetch actually succeeded
     tle_epoch: str  # ISO 8601 UTC -- that TLE's own epoch
@@ -259,8 +255,13 @@ class TLESatelliteMetadata(TypedDict):
 
 class TLEMirrorMetadata(TypedDict):
     """The mirror's metadata.json, as fetch_mirror_metadata() returns it."""
-    generated_at: str  # ISO 8601 UTC -- when the refresh workflow last *ran*, regardless of whether every satellite's fetch succeeded that run
-    satellites: dict[str, TLESatelliteMetadata]  # keyed by NORAD ID as a string (JSON object keys are always strings)
+
+    # When the refresh workflow last *ran* (ISO 8601 UTC), regardless of
+    # whether every satellite's fetch succeeded that run.
+    generated_at: str
+    satellites: dict[
+        str, TLESatelliteMetadata
+    ]  # keyed by NORAD ID as a string (JSON object keys are always strings)
 
 
 def fetch_mirror_metadata() -> TLEMirrorMetadata | None:
@@ -300,7 +301,9 @@ def fetch_mirror_metadata() -> TLEMirrorMetadata | None:
     return cast(TLEMirrorMetadata, data)
 
 
-def is_older_than(reference_time: datetime, max_age: timedelta, now: datetime | None = None) -> bool:
+def is_older_than(
+    reference_time: datetime, max_age: timedelta, now: datetime | None = None
+) -> bool:
     """
     Whether `reference_time` (a timezone-aware UTC datetime) is more
     than `max_age` older than `now` (defaults to the real current time
@@ -321,7 +324,7 @@ def is_older_than(reference_time: datetime, max_age: timedelta, now: datetime | 
     other caller, for no benefit to the actual comparison it does.
     """
     if now is None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
     return (now - reference_time) > max_age
 
 
@@ -345,6 +348,7 @@ class StalenessWarnings(TypedDict):
     """What app.py's st.warning banners should say, decided once here
     rather than inline in the Streamlit script -- see
     compute_staleness_warnings()."""
+
     mirror_stale: bool
     stale_satellite_names: list[str]
 
@@ -380,7 +384,8 @@ def compute_staleness_warnings(
             )
 
     stale_satellite_names = [
-        name for name, epoch in satellite_epochs.items()
+        name
+        for name, epoch in satellite_epochs.items()
         if is_older_than(epoch, timedelta(days=TLE_EPOCH_WARNING_DAYS), now=now)
     ]
 

@@ -81,7 +81,7 @@ def _split_path_at_antimeridian(
     latitudes = np.asarray(latitudes, dtype=float)
     crossings = find_antimeridian_crossings(longitudes)
     if len(crossings) == 0:
-        return [[[float(lo), float(la)] for lo, la in zip(longitudes, latitudes)]]
+        return [[[float(lo), float(la)] for lo, la in zip(longitudes, latitudes, strict=True)]]
 
     # For each crossing, the exact boundary longitude (+180 or -180,
     # whichever side the track is moving *towards*) and the latitude at
@@ -105,9 +105,9 @@ def _split_path_at_antimeridian(
     segment_bounds = [0, *(int(i) + 1 for i in crossings), len(longitudes)]
     paths: list[list[list[float]]] = []
     for j in range(len(segment_bounds) - 1):
-        lo_slice = longitudes[segment_bounds[j]:segment_bounds[j + 1]]
-        la_slice = latitudes[segment_bounds[j]:segment_bounds[j + 1]]
-        path = [[float(lo), float(la)] for lo, la in zip(lo_slice, la_slice)]
+        lo_slice = longitudes[segment_bounds[j] : segment_bounds[j + 1]]
+        la_slice = latitudes[segment_bounds[j] : segment_bounds[j + 1]]
+        path = [[float(lo), float(la)] for lo, la in zip(lo_slice, la_slice, strict=True)]
         if j > 0:
             # This segment starts right after a crossing -- prepend the
             # same crossing's interpolated point, on the *opposite* side
@@ -299,19 +299,23 @@ def build_globe_deck(ground_tracks: dict[str, GroundTrackDict]) -> pdk.Deck:
     sitting at the same visual depth doesn't intercept picking meant
     for the layers above it.
     """
-    layers = [pdk.Layer(
-        "GeoJsonLayer",
-        data=_WORLD_LAND_GEOJSON,
-        filled=True,
-        get_fill_color=_LAND_FILL_COLOR,
-        stroked=True,
-        get_line_color=_LAND_BORDER_COLOR,
-        line_width_min_pixels=_LAND_BORDER_WIDTH_PIXELS,
-        pickable=False,
-    )]
+    layers = [
+        pdk.Layer(
+            "GeoJsonLayer",
+            data=_WORLD_LAND_GEOJSON,
+            filled=True,
+            get_fill_color=_LAND_FILL_COLOR,
+            stroked=True,
+            get_line_color=_LAND_BORDER_COLOR,
+            line_width_min_pixels=_LAND_BORDER_WIDTH_PIXELS,
+            pickable=False,
+        )
+    ]
     view_state = pdk.ViewState(
-        latitude=KOUROU_LATITUDE_DEG, longitude=KOUROU_LONGITUDE_DEG,
-        zoom=1.7, pitch=0,
+        latitude=KOUROU_LATITUDE_DEG,
+        longitude=KOUROU_LONGITUDE_DEG,
+        zoom=1.7,
+        pitch=0,
     )
 
     for name, track in ground_tracks.items():
@@ -338,22 +342,24 @@ def build_globe_deck(ground_tracks: dict[str, GroundTrackDict]) -> pdk.Deck:
         # per point for a satellite with hundreds of samples.
         time_strings = track["time"].utc_strftime("%Y-%m-%d %H:%M:%S UTC")
 
-        layers.append(pdk.Layer(
-            "PathLayer",
-            # One "path" entry per antimeridian-free sub-path (usually
-            # just one) rather than a single entry spanning the whole
-            # track -- see _split_path_at_antimeridian() and this
-            # function's own docstring for why a single entry draws a
-            # spurious wrong-direction line at a +-180 degree crossing.
-            data=[
-                {"path": sub_path, "color": color}
-                for sub_path in _split_path_at_antimeridian(longitude_deg, latitude_deg)
-            ],
-            get_path="path",
-            get_color="color",
-            get_width=15000,
-            pickable=False,
-        ))
+        layers.append(
+            pdk.Layer(
+                "PathLayer",
+                # One "path" entry per antimeridian-free sub-path (usually
+                # just one) rather than a single entry spanning the whole
+                # track -- see _split_path_at_antimeridian() and this
+                # function's own docstring for why a single entry draws a
+                # spurious wrong-direction line at a +-180 degree crossing.
+                data=[
+                    {"path": sub_path, "color": color}
+                    for sub_path in _split_path_at_antimeridian(longitude_deg, latitude_deg)
+                ],
+                get_path="path",
+                get_color="color",
+                get_width=15000,
+                pickable=False,
+            )
+        )
 
         # Deliberately built from the original, unsplit longitude_deg/
         # latitude_deg arrays, not from _split_path_at_antimeridian()'s
@@ -382,41 +388,48 @@ def build_globe_deck(ground_tracks: dict[str, GroundTrackDict]) -> pdk.Deck:
                 latitude_deg[::_HOVER_POINT_STRIDE],
                 altitude_km[::_HOVER_POINT_STRIDE],
                 time_strings[::_HOVER_POINT_STRIDE],
+                strict=True,
             )
         ]
-        layers.append(pdk.Layer(
-            "ScatterplotLayer",
-            data=hover_points,
-            get_position=["lon", "lat"],
-            get_fill_color="color",
-            radius_min_pixels=5,
-            pickable=True,
-        ))
+        layers.append(
+            pdk.Layer(
+                "ScatterplotLayer",
+                data=hover_points,
+                get_position=["lon", "lat"],
+                get_fill_color="color",
+                radius_min_pixels=5,
+                pickable=True,
+            )
+        )
 
-    layers.append(pdk.Layer(
-        "ScatterplotLayer",
-        # Same field names as the per-satellite hover points above (name,
-        # time, lat_str, lon_str, alt_str) so the one shared tooltip
-        # template renders sensibly for Kourou too, rather than showing
-        # unresolved "{time}"/"{alt_str}" placeholders: "time" becomes a
-        # descriptive label instead of a timestamp, and "alt_str" reuses
-        # config.KOUROU_ELEVATION_M (0m -- coastal, effectively sea
-        # level) instead of a made-up value.
-        data=[{
-            "name": "Kourou",
-            "time": "Guiana Space Centre (ground station)",
-            "lat_str": f"{KOUROU_LATITUDE_DEG:.4f}",
-            "lon_str": f"{KOUROU_LONGITUDE_DEG:.4f}",
-            "alt_str": f"{KOUROU_ELEVATION_M:.1f}",
-        }],
-        get_position=[KOUROU_LONGITUDE_DEG, KOUROU_LATITUDE_DEG],
-        get_fill_color=_KOUROU_COLOR,
-        radius_min_pixels=_KOUROU_RADIUS_PIXELS,
-        stroked=True,
-        get_line_color=[0, 0, 0],
-        line_width_min_pixels=2,
-        pickable=True,
-    ))
+    layers.append(
+        pdk.Layer(
+            "ScatterplotLayer",
+            # Same field names as the per-satellite hover points above (name,
+            # time, lat_str, lon_str, alt_str) so the one shared tooltip
+            # template renders sensibly for Kourou too, rather than showing
+            # unresolved "{time}"/"{alt_str}" placeholders: "time" becomes a
+            # descriptive label instead of a timestamp, and "alt_str" reuses
+            # config.KOUROU_ELEVATION_M (0m -- coastal, effectively sea
+            # level) instead of a made-up value.
+            data=[
+                {
+                    "name": "Kourou",
+                    "time": "Guiana Space Centre (ground station)",
+                    "lat_str": f"{KOUROU_LATITUDE_DEG:.4f}",
+                    "lon_str": f"{KOUROU_LONGITUDE_DEG:.4f}",
+                    "alt_str": f"{KOUROU_ELEVATION_M:.1f}",
+                }
+            ],
+            get_position=[KOUROU_LONGITUDE_DEG, KOUROU_LATITUDE_DEG],
+            get_fill_color=_KOUROU_COLOR,
+            radius_min_pixels=_KOUROU_RADIUS_PIXELS,
+            stroked=True,
+            get_line_color=[0, 0, 0],
+            line_width_min_pixels=2,
+            pickable=True,
+        )
+    )
 
     return pdk.Deck(
         layers=layers,
@@ -426,9 +439,7 @@ def build_globe_deck(ground_tracks: dict[str, GroundTrackDict]) -> pdk.Deck:
         parameters={"clearColor": _CANVAS_CLEAR_COLOR},
         tooltip={
             "html": (
-                "<b>{name}</b><br/>{time}<br/>"
-                "lat {lat_str}°, lon {lon_str}°<br/>"
-                "alt {alt_str} km"
+                "<b>{name}</b><br/>{time}<br/>lat {lat_str}°, lon {lon_str}°<br/>alt {alt_str} km"
             ),
         },
     )

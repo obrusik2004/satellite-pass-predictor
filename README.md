@@ -1,5 +1,7 @@
 # Satellite Pass Predictor
 
+[![CI](https://github.com/obrusik2004/satellite-pass-predictor/actions/workflows/ci.yml/badge.svg)](https://github.com/obrusik2004/satellite-pass-predictor/actions/workflows/ci.yml)
+
 A Python tool that predicts when satellites are visible from a ground station at
 Kourou, French Guiana — the Guiana Space Centre (CSG), Europe's spaceport. It
 fetches current orbital data (TLEs) from Celestrak, propagates each satellite's
@@ -130,9 +132,9 @@ the combined report to `output/report.html`.
 ### Running the tests
 
 ```bash
-pip install -r requirements-dev.txt
+pip install -e ".[dev]" -c requirements.txt
 pytest
-mypy app.py main.py satellite_pass_predictor/ tests/ scripts/
+mypy app.py main.py satellite_pass_predictor tests
 ```
 
 ## Data pipeline
@@ -147,23 +149,24 @@ Streamlit Cloud *can* reach (`raw.githubusercontent.com` is a generic file
 host, unrelated to Celestrak's own infrastructure).
 
 ```
-                    scripts/fetch_tles.py                 raw.githubusercontent.com
+              satellite_pass_predictor/fetch_tles.py        raw.githubusercontent.com
    Celestrak  ───────  every 6h  ───────▶  tle-data branch  ───────────────▶  Streamlit app
   (gp.php API)      (GitHub Actions)      (tle/*.txt +                    (source="mirror",
                                             metadata.json)                  ~1h local cache)
 ```
 
-- **`scripts/fetch_tles.py`** fetches each tracked satellite's TLE from
-  Celestrak, validates it (exactly one TLE, parses with Skyfield, NORAD ID
-  matches what was actually requested) *before* writing anything, and never
-  overwrites a previously-published file with a bad response — a satellite
-  that fails to refresh just keeps its last good file.
-- **`.github/workflows/refresh-tles.yml`** installs only
-  **`requirements-fetch.txt`** (the small subset of `requirements.txt` that
-  `scripts/fetch_tles.py` actually needs, kept in sync with it by a test)
-  rather than the full `requirements.txt`, so a PyPI hiccup on an unrelated
-  package (streamlit, pandas, ...) can't fail this run. It then runs that
-  script every 6 hours (plus on manual trigger), then publishes `tle/` as a
+- **`satellite_pass_predictor/fetch_tles.py`** fetches each tracked satellite's
+  TLE from Celestrak, validates it (exactly one TLE, parses with Skyfield,
+  NORAD ID matches what was actually requested) *before* writing anything, and
+  never overwrites a previously-published file with a bad response — a
+  satellite that fails to refresh just keeps its last good file.
+- **`.github/workflows/refresh-tles.yml`** installs only the package's core
+  dependencies (`pip install -c requirements.txt .` — everything
+  `fetch_tles.py` needs, pinned to the same versions `requirements.txt`
+  locks) rather than the full `requirements.txt`, so a PyPI hiccup on an
+  unrelated package (streamlit, pandas, ...) can't fail this run. It then
+  runs the `satpass-fetch-tles` entry point every 6 hours (plus on manual
+  trigger), then publishes `tle/` as a
   single orphan commit on the `tle-data` branch — force-pushed each run, so
   the branch never grows past one commit — authored by `github-actions[bot]`.
   Publishing to `main` instead would trigger a Streamlit redeploy on every refresh and

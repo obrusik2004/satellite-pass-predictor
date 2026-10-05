@@ -71,7 +71,9 @@ _ROOT_VARS = f"""
   }}
 """
 
-_CSS = _ROOT_VARS + """
+_CSS = (
+    _ROOT_VARS
+    + """
   * { box-sizing: border-box; }
   body {
     margin: 0;
@@ -146,6 +148,7 @@ _CSS = _ROOT_VARS + """
     font-size: 0.78rem;
   }
 """
+)
 
 
 def _column_css_class(key: str) -> str:
@@ -174,15 +177,11 @@ def _passes_table_html(passes_by_satellite: dict[str, list[PassDict]]) -> str:
         class_attr = f' class="{css_class}"' if css_class else ""
         return f"<{tag}{class_attr}>{html.escape(text)}</{tag}>"
 
-    header_cells = "".join(
-        _cell("th", key, title) for key, title, _ in PASS_TABLE_COLUMNS
-    )
+    header_cells = "".join(_cell("th", key, title) for key, title, _ in PASS_TABLE_COLUMNS)
 
     body_rows = []
     for row in rows:
-        cells = "".join(
-            _cell("td", key, str(row[key])) for key, _, _ in PASS_TABLE_COLUMNS
-        )
+        cells = "".join(_cell("td", key, str(row[key])) for key, _, _ in PASS_TABLE_COLUMNS)
         body_rows.append(f"<tr>{cells}</tr>")
 
     # Wrapped in .table-wrapper so a wide table (long Notes text, this
@@ -253,7 +252,8 @@ def generate_html_report(
 
     <section>
       <h2>Ground Tracks (next {duration_hours:.0f}h)</h2>
-      <img src="data:image/png;base64,{png_base64}" alt="Satellite ground tracks over the next {duration_hours:.0f} hours">
+      <img src="data:image/png;base64,{png_base64}"
+           alt="Satellite ground tracks over the next {duration_hours:.0f} hours">
     </section>
 
     <section>
@@ -262,7 +262,8 @@ def generate_html_report(
     </section>
 
     <footer>
-      <p>satellite-pass-predictor &middot; SGP4 propagation via Skyfield &middot; TLE data from Celestrak</p>
+      <p>satellite-pass-predictor &middot; SGP4 propagation via Skyfield &middot;
+      TLE data from Celestrak</p>
     </footer>
   </div>
 </body>

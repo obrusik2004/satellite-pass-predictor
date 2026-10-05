@@ -30,8 +30,12 @@ def _a_real_pass_with_some_duration(ts: Timescale, iss_satellite) -> PassDict:
     use this rather than risking a single-sample low_confidence graze.
     """
     passes = compute_passes(
-        iss_satellite, KOUROU, ts,
-        start_time=ts.utc(2026, 9, 21, 0, 0, 0), duration_hours=24 * 7, step_minutes=1,
+        iss_satellite,
+        KOUROU,
+        ts,
+        start_time=ts.utc(2026, 9, 21, 0, 0, 0),
+        duration_hours=24 * 7,
+        step_minutes=1,
     )
     return next(p for p in passes if p["duration_minutes"] > 1.0)
 
@@ -80,8 +84,10 @@ def test_radius_is_90_minus_elevation_and_zenith_maps_to_plot_center(
     # same deterministic function, so this must match exactly.
     duration_hours = (pass_["end_time"].tt - pass_["start_time"].tt) * 24.0
     t = build_time_grid(
-        ts, start_time=pass_["start_time"],
-        duration_hours=duration_hours, step_minutes=SKY_PLOT_STEP_SECONDS / 60.0,
+        ts,
+        start_time=pass_["start_time"],
+        duration_hours=duration_hours,
+        step_minutes=SKY_PLOT_STEP_SECONDS / 60.0,
     )
     altaz = compute_altaz(iss_satellite, KOUROU, t)
     expected_radius = 90.0 - altaz["elevation_deg"]

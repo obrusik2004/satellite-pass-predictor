@@ -24,15 +24,14 @@ import numpy as np
 import pytest
 from skyfield.timelib import Timescale
 
+from satellite_pass_predictor.colors import hex_to_rgb
 from satellite_pass_predictor.config import (
-    KOUROU_ELEVATION_M,
     KOUROU_LATITUDE_DEG,
     KOUROU_LONGITUDE_DEG,
     KOUROU_MARKER_COLOR,
     SATELLITE_COLORS,
     THEME_BACKGROUND_COLOR,
 )
-from satellite_pass_predictor.colors import hex_to_rgb
 from satellite_pass_predictor.globe import (
     _HOVER_POINT_STRIDE,
     _split_path_at_antimeridian,
@@ -89,7 +88,9 @@ def test_kourou_layer_is_at_kourous_coordinates_and_visually_distinct(
 
     scatter_layers = _layers_by_type(deck, "ScatterplotLayer")
     kourou_layer = next(layer for layer in scatter_layers if layer.data[0]["name"] == "Kourou")
-    satellite_layer = next(layer for layer in scatter_layers if layer.data[0]["name"] == "ISS (ZARYA)")
+    satellite_layer = next(
+        layer for layer in scatter_layers if layer.data[0]["name"] == "ISS (ZARYA)"
+    )
 
     assert kourou_layer.get_position == [KOUROU_LONGITUDE_DEG, KOUROU_LATITUDE_DEG]
     # Exactly config.KOUROU_MARKER_COLOR (white), not an arbitrary color --
@@ -127,8 +128,7 @@ def test_satellite_track_color_comes_from_the_shared_color_mapping(ts: Timescale
         path_layer = next(layer for layer in path_layers if layer.data[0]["color"] == expected_rgb)
         assert path_layer.data[0]["color"] == expected_rgb
         scatter_layer = next(
-            layer for layer in scatter_layers
-            if layer.data and layer.data[0].get("name") == name
+            layer for layer in scatter_layers if layer.data and layer.data[0].get("name") == name
         )
         assert scatter_layer.data[0]["color"] == expected_rgb
 
@@ -148,7 +148,8 @@ def test_hover_points_are_unaffected_by_antimeridian_splitting(ts: Timescale) ->
     deck = build_globe_deck(ground_tracks)
 
     scatter_layer = next(
-        layer for layer in _layers_by_type(deck, "ScatterplotLayer")
+        layer
+        for layer in _layers_by_type(deck, "ScatterplotLayer")
         if layer.data and layer.data[0].get("name") == "ISS (ZARYA)"
     )
     assert len(scatter_layer.data) == len(range(0, len(longitudes), _HOVER_POINT_STRIDE))
@@ -165,7 +166,9 @@ def test_hover_points_contain_name_time_latlon_and_altitude(ts: Timescale) -> No
     deck = build_globe_deck(ground_tracks)
 
     scatter_layers = _layers_by_type(deck, "ScatterplotLayer")
-    satellite_layer = next(layer for layer in scatter_layers if layer.data[0]["name"] == "ISS (ZARYA)")
+    satellite_layer = next(
+        layer for layer in scatter_layers if layer.data[0]["name"] == "ISS (ZARYA)"
+    )
     point = satellite_layer.data[0]
 
     assert point["name"] == "ISS (ZARYA)"
@@ -192,7 +195,8 @@ def test_hover_point_layer_is_thinned_but_path_layer_stays_full_resolution(
 
     path_layer = _layers_by_type(deck, "PathLayer")[0]
     scatter_layer = next(
-        layer for layer in _layers_by_type(deck, "ScatterplotLayer")
+        layer
+        for layer in _layers_by_type(deck, "ScatterplotLayer")
         if layer.data[0]["name"] == "ISS (ZARYA)"
     )
 
@@ -284,7 +288,7 @@ def test_no_path_segment_jumps_more_than_180_degrees_in_longitude(ts: Timescale)
     path_layer = _layers_by_type(deck, "PathLayer")[0]
     for sub_path_entry in path_layer.data:
         lons = [point[0] for point in sub_path_entry["path"]]
-        for lon_a, lon_b in zip(lons, lons[1:]):
+        for lon_a, lon_b in zip(lons, lons[1:], strict=False):
             assert abs(lon_b - lon_a) <= 180.0
 
 

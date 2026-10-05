@@ -98,6 +98,7 @@ def test_image_is_embedded_as_base64_not_linked(tmp_path: Path, ts: Timescale) -
     assert png_path.name not in document
 
     import base64
+
     assert base64.b64encode(png_bytes).decode("ascii") in document
 
 
@@ -123,7 +124,7 @@ def test_report_contains_the_same_pass_data_as_the_text_table(
     assert "ISS (ZARYA)" in document
     assert "10.0" in document  # start azimuth
     assert "45.0" in document  # max elevation
-    assert "8.0" in document   # duration
+    assert "8.0" in document  # duration
 
 
 def test_report_with_no_passes_shows_a_clean_message_not_an_empty_table(
@@ -134,7 +135,9 @@ def test_report_with_no_passes_shows_a_clean_message_not_an_empty_table(
     output_path = tmp_path / "report.html"
 
     generate_html_report(
-        str(png_path), {"ISS (ZARYA)": []}, generated_at=ts.utc(2026, 1, 1),
+        str(png_path),
+        {"ISS (ZARYA)": []},
+        generated_at=ts.utc(2026, 1, 1),
         output_path=str(output_path),
     )
 

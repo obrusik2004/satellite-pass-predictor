@@ -116,8 +116,10 @@ def build_sky_plot_figure(
     """
     duration_hours = (pass_["end_time"].tt - pass_["start_time"].tt) * 24.0
     t = build_time_grid(
-        ts, start_time=pass_["start_time"],
-        duration_hours=duration_hours, step_minutes=step_seconds / 60.0,
+        ts,
+        start_time=pass_["start_time"],
+        duration_hours=duration_hours,
+        step_minutes=step_seconds / 60.0,
     )
     altaz = compute_altaz(sat, observer, t)
     # compute_altaz()'s fields are typed float | NDArray (a scalar `t`
@@ -130,24 +132,39 @@ def build_sky_plot_figure(
     radius = 90.0 - elevation_deg
 
     fig = go.Figure()
-    fig.add_trace(go.Scatterpolar(
-        r=radius, theta=azimuth_deg, mode="lines", name="Pass",
-        line={"color": SATELLITE_COLORS[satellite_name], "width": 2},
-        customdata=elevation_deg,
-        hovertemplate="az %{theta:.1f}°, el %{customdata:.1f}°<extra></extra>",
-    ))
-    fig.add_trace(go.Scatterpolar(
-        r=[radius[0]], theta=[azimuth_deg[0]], mode="markers", name="AOS (rise)",
-        marker={"color": _RISE_COLOR, "size": 12, "symbol": "circle"},
-        customdata=[elevation_deg[0]],
-        hovertemplate="AOS (rise): az %{theta:.1f}°, el %{customdata:.1f}°<extra></extra>",
-    ))
-    fig.add_trace(go.Scatterpolar(
-        r=[radius[-1]], theta=[azimuth_deg[-1]], mode="markers", name="LOS (set)",
-        marker={"color": _SET_COLOR, "size": 12, "symbol": "square"},
-        customdata=[elevation_deg[-1]],
-        hovertemplate="LOS (set): az %{theta:.1f}°, el %{customdata:.1f}°<extra></extra>",
-    ))
+    fig.add_trace(
+        go.Scatterpolar(
+            r=radius,
+            theta=azimuth_deg,
+            mode="lines",
+            name="Pass",
+            line={"color": SATELLITE_COLORS[satellite_name], "width": 2},
+            customdata=elevation_deg,
+            hovertemplate="az %{theta:.1f}°, el %{customdata:.1f}°<extra></extra>",
+        )
+    )
+    fig.add_trace(
+        go.Scatterpolar(
+            r=[radius[0]],
+            theta=[azimuth_deg[0]],
+            mode="markers",
+            name="AOS (rise)",
+            marker={"color": _RISE_COLOR, "size": 12, "symbol": "circle"},
+            customdata=[elevation_deg[0]],
+            hovertemplate="AOS (rise): az %{theta:.1f}°, el %{customdata:.1f}°<extra></extra>",
+        )
+    )
+    fig.add_trace(
+        go.Scatterpolar(
+            r=[radius[-1]],
+            theta=[azimuth_deg[-1]],
+            mode="markers",
+            name="LOS (set)",
+            marker={"color": _SET_COLOR, "size": 12, "symbol": "square"},
+            customdata=[elevation_deg[-1]],
+            hovertemplate="LOS (set): az %{theta:.1f}°, el %{customdata:.1f}°<extra></extra>",
+        )
+    )
 
     fig.update_layout(
         polar={

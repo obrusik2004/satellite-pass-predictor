@@ -28,6 +28,7 @@ FloatOrArray = float | NDArray[np.float64]
 
 class AltAzDict(TypedDict):
     """Topocentric look angles: compute_altaz()'s fixed, known keys."""
+
     elevation_deg: FloatOrArray
     azimuth_deg: FloatOrArray
     distance_km: FloatOrArray
@@ -35,6 +36,7 @@ class AltAzDict(TypedDict):
 
 class PassDict(TypedDict):
     """One detected visibility pass: find_passes()'s fixed, known keys."""
+
     start_time: Time
     start_azimuth_deg: float
     start_truncated: bool
@@ -48,9 +50,7 @@ class PassDict(TypedDict):
     low_confidence: bool
 
 
-def compute_altaz(
-    sat: EarthSatellite, observer: GeographicPosition, t: Time
-) -> AltAzDict:
+def compute_altaz(sat: EarthSatellite, observer: GeographicPosition, t: Time) -> AltAzDict:
     """
     Compute a satellite's elevation, azimuth, and range as seen from
     `observer` at time(s) `t`.
@@ -141,7 +141,7 @@ def find_passes(
         end_idx = j - 1
         end_truncated = end_idx == n - 1
 
-        elev_segment = elevation_deg[start_idx:end_idx + 1]
+        elev_segment = elevation_deg[start_idx : end_idx + 1]
         n_samples = end_idx - start_idx + 1
         max_local_idx = start_idx + int(np.argmax(elev_segment))
 
@@ -169,19 +169,21 @@ def find_passes(
             and elev_segment[-1] > elev_segment[-2]
         )
 
-        passes.append({
-            "start_time": t[start_idx],
-            "start_azimuth_deg": azimuth_deg[start_idx],
-            "start_truncated": start_truncated,
-            "end_time": t[end_idx],
-            "end_azimuth_deg": azimuth_deg[end_idx],
-            "end_truncated": end_truncated,
-            "max_elevation_deg": elevation_deg[max_local_idx],
-            "max_elevation_time": t[max_local_idx],
-            "max_elevation_truncated": max_elevation_truncated,
-            "duration_minutes": (t[end_idx] - t[start_idx]) * 1440.0,
-            "low_confidence": n_samples < MIN_PASS_SAMPLES_FOR_CONFIDENCE,
-        })
+        passes.append(
+            {
+                "start_time": t[start_idx],
+                "start_azimuth_deg": azimuth_deg[start_idx],
+                "start_truncated": start_truncated,
+                "end_time": t[end_idx],
+                "end_azimuth_deg": azimuth_deg[end_idx],
+                "end_truncated": end_truncated,
+                "max_elevation_deg": elevation_deg[max_local_idx],
+                "max_elevation_time": t[max_local_idx],
+                "max_elevation_truncated": max_elevation_truncated,
+                "duration_minutes": (t[end_idx] - t[start_idx]) * 1440.0,
+                "low_confidence": n_samples < MIN_PASS_SAMPLES_FOR_CONFIDENCE,
+            }
+        )
         i = j
 
     return passes
@@ -212,6 +214,8 @@ def compute_passes(
     elevation_deg = cast(NDArray[np.float64], altaz["elevation_deg"])
     azimuth_deg = cast(NDArray[np.float64], altaz["azimuth_deg"])
     return find_passes(
-        t, elevation_deg, azimuth_deg,
+        t,
+        elevation_deg,
+        azimuth_deg,
         min_elevation_deg=min_elevation_deg,
     )

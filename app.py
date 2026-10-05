@@ -250,11 +250,16 @@ st.markdown(
 satellite_names = list(SATELLITES.keys())
 with st.sidebar:
     selected_names = st.multiselect(
-        "Satellites", options=satellite_names, default=satellite_names,
+        "Satellites",
+        options=satellite_names,
+        default=satellite_names,
     )
 
     duration_hours = st.slider(
-        "Time window (hours)", min_value=1, max_value=72, value=24,
+        "Time window (hours)",
+        min_value=1,
+        max_value=72,
+        value=24,
         help=(
             "How far ahead to compute visibility passes. The globe below "
             f"shows at most the next {GLOBE_MAX_DURATION_HOURS}h regardless "
@@ -306,12 +311,17 @@ with st.sidebar:
         # raising -- the TLEs themselves already loaded fine above (or
         # load_satellites() would have raised), so this is purely "we
         # can't show provenance details right now," not a reason to stop.
-        st.caption("TLEs from Celestrak via GitHub mirror -- refresh provenance unavailable right now.")
+        st.caption(
+            "TLEs from Celestrak via GitHub mirror -- refresh provenance unavailable right now."
+        )
     else:
         generated_at = parse_iso_utc(mirror_metadata["generated_at"])
         generated_at_str = (
-            generated_at.strftime("%Y-%m-%d %H:%M UTC") if generated_at is not None
-            else mirror_metadata["generated_at"]  # malformed timestamp -- show it raw rather than hide it
+            generated_at.strftime("%Y-%m-%d %H:%M UTC")
+            if generated_at is not None
+            else mirror_metadata[
+                "generated_at"
+            ]  # malformed timestamp -- show it raw rather than hide it
         )
         st.caption(f"TLEs from Celestrak via GitHub mirror, last refreshed {generated_at_str}")
 
@@ -357,7 +367,8 @@ if staleness["mirror_stale"]:
 if staleness["stale_satellite_names"]:
     st.warning(
         f"TLE data for {', '.join(staleness['stale_satellite_names'])} is more than "
-        f"{TLE_EPOCH_WARNING_DAYS:.0f} day(s) old -- predictions for that satellite may be less accurate."
+        f"{TLE_EPOCH_WARNING_DAYS:.0f} day(s) old -- predictions for that satellite "
+        f"may be less accurate."
     )
 
 globe_duration_hours = min(duration_hours, GLOBE_MAX_DURATION_HOURS)
@@ -371,7 +382,9 @@ if duration_hours > GLOBE_MAX_DURATION_HOURS:
         f"{duration_hours}h."
     )
 ground_tracks = {
-    name: compute_ground_track(sat, ts, start_time=now, duration_hours=globe_duration_hours, step_minutes=1)
+    name: compute_ground_track(
+        sat, ts, start_time=now, duration_hours=globe_duration_hours, step_minutes=1
+    )
     for name, sat in satellites.items()
 }
 st.pydeck_chart(build_globe_deck(ground_tracks), height=600)
@@ -461,20 +474,26 @@ else:
         subset=["Satellite"],
     )
     event = st.dataframe(
-        styled_rows, width="stretch", hide_index=True,
-        on_select="rerun", selection_mode="single-row", key="passes_table",
-        column_config={"Notes": st.column_config.TextColumn(
-            # "small", one of column_config's three named width presets
-            # alongside "medium"/"large" -- comfortably fits "LC" alone
-            # or a couple of codes comma-joined without truncating.
-            width="small",
-            # Column-header tooltip (hover the "Notes" header) as a
-            # lightweight, always-available second explanation of the
-            # codes, alongside the caption below rather than instead of
-            # it -- see the caption's own comment for why the caption
-            # stays as the primary one.
-            help="\n".join(f"- **{code}**: {meaning}" for code, meaning in NOTE_CODE_LEGEND),
-        )},
+        styled_rows,
+        width="stretch",
+        hide_index=True,
+        on_select="rerun",
+        selection_mode="single-row",
+        key="passes_table",
+        column_config={
+            "Notes": st.column_config.TextColumn(
+                # "small", one of column_config's three named width presets
+                # alongside "medium"/"large" -- comfortably fits "LC" alone
+                # or a couple of codes comma-joined without truncating.
+                width="small",
+                # Column-header tooltip (hover the "Notes" header) as a
+                # lightweight, always-available second explanation of the
+                # codes, alongside the caption below rather than instead of
+                # it -- see the caption's own comment for why the caption
+                # stays as the primary one.
+                help="\n".join(f"- **{code}**: {meaning}" for code, meaning in NOTE_CODE_LEGEND),
+            )
+        },
     )
     # No genuine per-cell dynamic tooltip exists for a text column in
     # this pinned streamlit==1.64.0 -- checked directly against

@@ -36,6 +36,7 @@ FloatOrArray = float | NDArray[np.float64]
 
 class SubpointDict(TypedDict):
     """Geodetic subpoint: get_subpoint()'s fixed, known keys."""
+
     latitude_deg: FloatOrArray
     longitude_deg: FloatOrArray
     altitude_km: FloatOrArray
@@ -43,6 +44,7 @@ class SubpointDict(TypedDict):
 
 class GroundTrackDict(SubpointDict):
     """A SubpointDict plus the time grid it was sampled at."""
+
     time: Time
 
 

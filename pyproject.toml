@@ -1,0 +1,86 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "satellite-pass-predictor"
+version = "0.9.0"
+description = "SGP4 satellite pass predictor for Kourou, French Guiana (the Guiana Space Centre)."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Aleksander Bruski" }]
+# Core deps: what the package's non-app modules (config, tle_data,
+# propagation, time_utils, visibility, visualization, reporting, cli,
+# fetch_tles) and main.py need. sgp4 is pinned explicitly, not just
+# pulled in transitively by skyfield, since which SGP4 implementation
+# is used is a deliberate choice this project's README documents.
+dependencies = [
+    "skyfield>=1.55,<2",
+    "sgp4>=2.27,<3",
+    "requests>=2.34,<3",
+    "matplotlib>=3.11,<4",
+    "numpy>=2.4,<3",
+]
+
+[project.optional-dependencies]
+# Only app.py and the package modules it alone uses (globe.py, skyplot.py)
+# need these -- the CLI and fetch_tles.py don't import them.
+app = [
+    "streamlit>=1.64,<2",
+    "pydeck>=0.9,<1",
+    "plotly>=7.1,<8",
+    "pandas>=3.0,<4",
+]
+# Depends on "app" too: the test suite exercises globe.py/skyplot.py,
+# and mypy type-checks app.py -- a full dev environment needs both.
+dev = [
+    "pytest>=9.1,<10",
+    "pytest-cov>=7.1,<8",
+    "mypy>=2.3,<3",
+    "ruff>=0.16,<1",
+    "satellite-pass-predictor[app]",
+]
+
+[project.urls]
+Homepage = "https://github.com/obrusik2004/satellite-pass-predictor"
+
+[project.scripts]
+satpass = "satellite_pass_predictor.cli:main"
+satpass-fetch-tles = "satellite_pass_predictor.fetch_tles:main"
+
+[tool.setuptools.packages.find]
+include = ["satellite_pass_predictor*"]
+
+[tool.setuptools.package-data]
+satellite_pass_predictor = ["assets/*.geojson"]
+
+[tool.ruff]
+line-length = 100
+extend-exclude = ["venv", "data", "output"]
+
+[tool.ruff.lint]
+# E/F: baseline pycodestyle + pyflakes. I: import sorting. UP: keep
+# syntax current for the pinned Python floor (3.11). B: bugbear --
+# catches real bugs (e.g. mutable default arguments), not just style.
+# SIM: flags needlessly roundabout code. Kept intentionally narrow:
+# stricter sets (docstring/path/exception-message rules, argument-count
+# limits, ...) would force a larger refactor than this pass is for.
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+# skyfield, pydeck, plotly and pandas ship no py.typed marker, so every
+# import from them would otherwise raise an unavoidable "missing library
+# stubs" error unrelated to our own code.
+module = ["skyfield.*", "pydeck.*", "plotly.*", "pandas.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

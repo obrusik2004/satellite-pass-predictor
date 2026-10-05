@@ -1,7 +1,7 @@
 """
-Tests for scripts.fetch_tles -- the standalone script
+Tests for satellite_pass_predictor.fetch_tles -- the module
 .github/workflows/refresh-tles.yml runs to fetch TLEs from Celestrak and
-publish them to the tle-data branch mirror (see that script's module
+publish them to the tle-data branch mirror (see that module's own
 docstring for why this pipeline exists at all).
 
 No real network, no real Celestrak: requests.get() is mocked throughout,
@@ -29,7 +29,7 @@ from typing import Any
 import pytest
 import requests
 
-from scripts import fetch_tles
+from satellite_pass_predictor import fetch_tles
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 _ISS_TLE_BYTES = (FIXTURES_DIR / "iss_tle.txt").read_bytes()
@@ -88,7 +88,8 @@ def test_validate_tle_rejects_a_mismatched_norad_id() -> None:
 
 def test_fetch_one_succeeds_for_a_valid_response(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        fetch_tles.requests, "get",
+        fetch_tles.requests,
+        "get",
         lambda *a, **k: _fake_response(_ISS_TLE_BYTES),
     )
 
@@ -104,7 +105,8 @@ def test_fetch_one_succeeds_for_a_valid_response(monkeypatch: pytest.MonkeyPatch
 def test_fetch_one_fails_on_a_request_exception(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(fetch_tles.time, "sleep", lambda seconds: None)
     monkeypatch.setattr(
-        fetch_tles.requests, "get",
+        fetch_tles.requests,
+        "get",
         lambda *a, **k: (_ for _ in ()).throw(requests.ConnectionError("refused")),
     )
 
@@ -189,8 +191,14 @@ def test_load_existing_metadata_reads_a_real_previously_published_file(
 ) -> None:
     previous = {
         "generated_at": "2026-09-28T00:00:00Z",
-        "satellites": {"25544": {"name": "ISS (ZARYA)", "fetched_at": "2026-09-28T00:00:00Z",
-                                  "tle_epoch": "2026-09-27T04:10:50Z", "source_url": "https://example/"}},
+        "satellites": {
+            "25544": {
+                "name": "ISS (ZARYA)",
+                "fetched_at": "2026-09-28T00:00:00Z",
+                "tle_epoch": "2026-09-27T04:10:50Z",
+                "source_url": "https://example/",
+            }
+        },
     }
     (tmp_path / "metadata.json").write_text(json.dumps(previous), encoding="utf-8")
 
@@ -208,14 +216,19 @@ def test_load_existing_metadata_reads_a_real_previously_published_file(
 def test_write_outputs_writes_file_and_metadata_for_a_successful_outcome(
     tmp_path: Path,
 ) -> None:
-    run_time = fetch_tles.datetime(2026, 9, 28, 12, 0, 0, tzinfo=fetch_tles.timezone.utc)
+    run_time = fetch_tles.datetime(2026, 9, 28, 12, 0, 0, tzinfo=fetch_tles.UTC)
     outcome = fetch_tles.FetchOutcome(
-        name="ISS (ZARYA)", norad_id=_ISS_NORAD_ID, url="https://example/iss",
-        success=True, tle_text=_ISS_TLE_BYTES,
-        tle_epoch=fetch_tles.datetime(2026, 9, 27, 4, 10, 50, tzinfo=fetch_tles.timezone.utc),
+        name="ISS (ZARYA)",
+        norad_id=_ISS_NORAD_ID,
+        url="https://example/iss",
+        success=True,
+        tle_text=_ISS_TLE_BYTES,
+        tle_epoch=fetch_tles.datetime(2026, 9, 27, 4, 10, 50, tzinfo=fetch_tles.UTC),
     )
 
-    metadata = fetch_tles.write_outputs(tmp_path, [outcome], {"generated_at": None, "satellites": {}}, run_time)
+    metadata = fetch_tles.write_outputs(
+        tmp_path, [outcome], {"generated_at": None, "satellites": {}}, run_time
+    )
 
     assert (tmp_path / "tle_25544.txt").read_bytes() == _ISS_TLE_BYTES
     assert metadata["generated_at"] == "2026-09-28T12:00:00Z"
@@ -247,15 +260,20 @@ def test_write_outputs_preserves_existing_file_and_metadata_for_a_failed_satelli
         "generated_at": "2026-09-28T00:00:00Z",
         "satellites": {
             "35933": {
-                "name": "BEESAT-1", "fetched_at": "2026-09-28T00:00:00Z",
-                "tle_epoch": "2026-09-26T16:32:10Z", "source_url": "https://example/beesat",
+                "name": "BEESAT-1",
+                "fetched_at": "2026-09-28T00:00:00Z",
+                "tle_epoch": "2026-09-26T16:32:10Z",
+                "source_url": "https://example/beesat",
             },
         },
     }
-    run_time = fetch_tles.datetime(2026, 9, 28, 12, 0, 0, tzinfo=fetch_tles.timezone.utc)
+    run_time = fetch_tles.datetime(2026, 9, 28, 12, 0, 0, tzinfo=fetch_tles.UTC)
     failed_outcome = fetch_tles.FetchOutcome(
-        name="BEESAT-1", norad_id=35933, url="https://example/beesat",
-        success=False, error="cannot fetch: Connection timed out",
+        name="BEESAT-1",
+        norad_id=35933,
+        url="https://example/beesat",
+        success=False,
+        error="cannot fetch: Connection timed out",
     )
 
     metadata = fetch_tles.write_outputs(tmp_path, [failed_outcome], previous_metadata, run_time)
@@ -279,20 +297,30 @@ def test_write_outputs_publishes_successes_alongside_preserved_failures(
     previous_metadata: dict[str, Any] = {
         "generated_at": "2026-09-28T00:00:00Z",
         "satellites": {
-            "35933": {"name": "BEESAT-1", "fetched_at": "2026-09-28T00:00:00Z",
-                       "tle_epoch": "2026-09-26T16:32:10Z", "source_url": "https://example/beesat"},
+            "35933": {
+                "name": "BEESAT-1",
+                "fetched_at": "2026-09-28T00:00:00Z",
+                "tle_epoch": "2026-09-26T16:32:10Z",
+                "source_url": "https://example/beesat",
+            },
         },
     }
-    run_time = fetch_tles.datetime(2026, 9, 28, 12, 0, 0, tzinfo=fetch_tles.timezone.utc)
+    run_time = fetch_tles.datetime(2026, 9, 28, 12, 0, 0, tzinfo=fetch_tles.UTC)
     outcomes = [
         fetch_tles.FetchOutcome(
-            name="ISS (ZARYA)", norad_id=_ISS_NORAD_ID, url="https://example/iss",
-            success=True, tle_text=_ISS_TLE_BYTES,
-            tle_epoch=fetch_tles.datetime(2026, 9, 27, 4, 10, 50, tzinfo=fetch_tles.timezone.utc),
+            name="ISS (ZARYA)",
+            norad_id=_ISS_NORAD_ID,
+            url="https://example/iss",
+            success=True,
+            tle_text=_ISS_TLE_BYTES,
+            tle_epoch=fetch_tles.datetime(2026, 9, 27, 4, 10, 50, tzinfo=fetch_tles.UTC),
         ),
         fetch_tles.FetchOutcome(
-            name="BEESAT-1", norad_id=35933, url="https://example/beesat",
-            success=False, error="cannot fetch: Connection timed out",
+            name="BEESAT-1",
+            norad_id=35933,
+            url="https://example/beesat",
+            success=False,
+            error="cannot fetch: Connection timed out",
         ),
     ]
 
@@ -310,7 +338,8 @@ def test_write_outputs_publishes_successes_alongside_preserved_failures(
 
 
 def test_main_returns_zero_when_every_satellite_succeeds(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     monkeypatch.setattr(fetch_tles, "SATELLITES", {"ISS (ZARYA)": _ISS_NORAD_ID})
     monkeypatch.setattr(fetch_tles.requests, "get", lambda *a, **k: _fake_response(_ISS_TLE_BYTES))
@@ -322,10 +351,12 @@ def test_main_returns_zero_when_every_satellite_succeeds(
 
 
 def test_main_returns_one_when_any_satellite_fails(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     monkeypatch.setattr(
-        fetch_tles, "SATELLITES",
+        fetch_tles,
+        "SATELLITES",
         {"ISS (ZARYA)": _ISS_NORAD_ID, "BEESAT-1": 35933},
     )
     monkeypatch.setattr(fetch_tles.time, "sleep", lambda seconds: None)
