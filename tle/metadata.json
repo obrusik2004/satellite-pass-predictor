@@ -1,0 +1,29 @@
+{
+  "generated_at": "2026-10-17T20:33:28Z",
+  "satellites": {
+    "25544": {
+      "fetched_at": "2026-10-17T20:33:28Z",
+      "name": "ISS (ZARYA)",
+      "source_url": "https://celestrak.org/NORAD/elements/gp.php?CATNR=25544&FORMAT=TLE",
+      "tle_epoch": "2026-10-17T11:59:10Z"
+    },
+    "35932": {
+      "fetched_at": "2026-10-17T20:33:28Z",
+      "name": "SWISSCUBE",
+      "source_url": "https://celestrak.org/NORAD/elements/gp.php?CATNR=35932&FORMAT=TLE",
+      "tle_epoch": "2026-10-17T05:12:34Z"
+    },
+    "35933": {
+      "fetched_at": "2026-10-17T20:33:28Z",
+      "name": "BEESAT-1",
+      "source_url": "https://celestrak.org/NORAD/elements/gp.php?CATNR=35933&FORMAT=TLE",
+      "tle_epoch": "2026-10-17T00:25:15Z"
+    },
+    "41457": {
+      "fetched_at": "2026-10-17T20:33:28Z",
+      "name": "MICROSCOPE",
+      "source_url": "https://celestrak.org/NORAD/elements/gp.php?CATNR=41457&FORMAT=TLE",
+      "tle_epoch": "2026-10-17T11:18:48Z"
+    }
+  }
+}
