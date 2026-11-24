@@ -82,6 +82,7 @@ jobs:
           satpass-fetch-tles --output-dir tle
           echo "exit_code=$?" >> "$GITHUB_OUTPUT"
         # The exit code is captured so whatever succeeded is published before the job fails.
+        # It is non-zero only when a failed satellite's mirrored TLE is stale (see fetch_tles.main).
 
       - name: Publish tle/ to the tle-data branch (single orphan commit)
         run: |
@@ -114,9 +115,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Fail the job if any satellite fetch failed
+      # A single missed refresh (Celestrak timeouts are common) is only a warning annotation;
+      # the script exits non-zero once a satellite's mirrored TLE is older than 24 h.
+      - name: Fail the job if a satellite's mirrored TLE has gone stale
         if: steps.fetch.outputs.exit_code != '0'
         run: |
-          echo "One or more satellites failed to fetch this run -- see the 'Fetch TLEs from Celestrak' step above for details."
+          echo "At least one satellite has no TLE newer than 24 h in the mirror -- see the 'Fetch TLEs from Celestrak' step above for details."
           echo "Whatever succeeded (and whatever was preserved from the previous run for the satellite(s) that failed) was still published above."
           exit 1

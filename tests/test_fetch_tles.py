@@ -4,6 +4,7 @@ requests.get is mocked throughout; the frozen ISS TLE is used as realistic respo
 """
 
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -279,7 +280,7 @@ def test_write_outputs_publishes_successes_alongside_preserved_failures(
     assert metadata["satellites"]["35933"] == previous_metadata["satellites"]["35933"]
 
 
-# main(): exit code is 0 only when every satellite succeeds.
+# main(): exit code is 1 only when a failed satellite has no recent TLE in the mirror.
 
 
 def test_main_returns_zero_when_every_satellite_succeeds(
@@ -295,7 +296,7 @@ def test_main_returns_zero_when_every_satellite_succeeds(
     assert (tmp_path / "tle_25544.txt").exists()
 
 
-def test_main_returns_one_when_any_satellite_fails(
+def test_main_returns_one_when_a_never_fetched_satellite_fails(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -318,3 +319,90 @@ def test_main_returns_one_when_any_satellite_fails(
     assert exit_code == 1
     # Whatever succeeded is still published.
     assert (tmp_path / "tle_25544.txt").exists()
+
+
+def _write_previous_metadata(output_dir: Path, norad_id: int, fetched_at: str) -> None:
+    """A previously-published metadata.json with one satellite fetched at `fetched_at`."""
+    metadata = {
+        "generated_at": fetched_at,
+        "satellites": {str(norad_id): {"name": "BEESAT-1", "fetched_at": fetched_at}},
+    }
+    (output_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+
+
+def _fail_beesat_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        fetch_tles,
+        "SATELLITES",
+        {"ISS (ZARYA)": _ISS_NORAD_ID, "BEESAT-1": 35933},
+    )
+    monkeypatch.setattr(tle_data.time, "sleep", lambda seconds: None)
+
+    def _get(url, **kwargs):
+        if "25544" in url:
+            return _fake_response(_ISS_TLE_BYTES)
+        raise requests.Timeout("read timed out")
+
+    monkeypatch.setattr(tle_data.requests, "get", _get)
+
+
+def test_main_returns_zero_when_a_failed_satellite_still_has_a_fresh_tle(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _fail_beesat_only(monkeypatch)
+    one_hour_ago = (datetime.now(UTC) - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    _write_previous_metadata(tmp_path, 35933, one_hour_ago)
+
+    exit_code = fetch_tles.main(["--output-dir", str(tmp_path)])
+
+    assert exit_code == 0
+    assert "::warning::BEESAT-1" in capsys.readouterr().out
+
+
+def test_main_returns_one_when_a_failed_satellite_has_gone_stale(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _fail_beesat_only(monkeypatch)
+    two_days_ago = (datetime.now(UTC) - timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    _write_previous_metadata(tmp_path, 35933, two_days_ago)
+
+    exit_code = fetch_tles.main(["--output-dir", str(tmp_path)])
+
+    assert exit_code == 1
+    assert "::error::BEESAT-1" in capsys.readouterr().out
+
+
+def test_main_respects_max_stale_hours(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _fail_beesat_only(monkeypatch)
+    three_hours_ago = (datetime.now(UTC) - timedelta(hours=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    _write_previous_metadata(tmp_path, 35933, three_hours_ago)
+
+    exit_code = fetch_tles.main(["--output-dir", str(tmp_path), "--max-stale-hours", "2"])
+
+    assert exit_code == 1
+
+
+# is_stale()
+
+
+@pytest.mark.parametrize(
+    ("metadata", "expected"),
+    [
+        ({"satellites": {}}, True),
+        ({"satellites": {"35933": {"name": "BEESAT-1"}}}, True),
+        ({"satellites": {"35933": {"fetched_at": "not a date"}}}, True),
+        ({"satellites": {"35933": {"fetched_at": "2026-11-22T12:00:00Z"}}}, False),
+        ({"satellites": {"35933": {"fetched_at": "2026-11-21T11:59:59Z"}}}, True),
+    ],
+)
+def test_is_stale(metadata: dict[str, Any], expected: bool) -> None:
+    run_time = datetime(2026, 11, 22, 12, 0, tzinfo=UTC)
+
+    assert fetch_tles.is_stale(metadata, 35933, run_time, timedelta(hours=24)) is expected

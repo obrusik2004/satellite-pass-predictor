@@ -67,3 +67,9 @@ Short records of the choices that shape the code: context, decision, consequence
 **Context.** Below about 10 degrees, terrain, buildings and vegetation block the horizon, the signal crosses the most atmosphere (refraction, attenuation, multipath), and the slant range is longest.
 **Decision.** `MIN_PASS_ELEVATION_DEG` is 10 degrees, the common default for LEO pass prediction and amateur-station planning.
 **Consequence.** Listed passes are ones a typical station could actually use; very low grazing passes are left out. Elevations are geometric (no refraction model), which at 10 degrees is off by only about 0.1 degree. It is one constant, so a station with a clear horizon (5 degrees) or a stricter link budget (15-20 degrees) can change it.
+
+## 12. Alert on a stale mirror, not on every missed refresh
+
+**Context.** Between September and November, about 1 in 14 refresh runs failed: in most of them every Celestrak request timed out for the whole ~3-minute fetch, and the next run succeeded. Each one sent a "Run failed" email although the published TLEs were only hours old.
+**Decision.** A failed satellite is a `::warning::` annotation while its last good TLE is newer than `MIRROR_REFRESH_WARNING_HOURS` (24 h); the run fails only once it is older, or was never fetched.
+**Consequence.** A failure email now means a satellite's published data is actually going stale, judged by the same 24 h threshold the app uses for its stale-mirror warning; a one-off Celestrak outage stays visible in the run's annotations without paging anyone.

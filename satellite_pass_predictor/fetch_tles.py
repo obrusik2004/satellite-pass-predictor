@@ -9,11 +9,11 @@ import argparse
 import json
 import sys
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from .config import CELESTRAK_URL, SATELLITES
+from .config import CELESTRAK_URL, MIRROR_REFRESH_WARNING_HOURS, SATELLITES
 from .tle_data import fetch_with_retries, validate_tle
 
 _ISO_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
@@ -107,8 +107,33 @@ def write_outputs(
     return metadata
 
 
+def last_fetched_at(previous_metadata: dict[str, Any], norad_id: int) -> datetime | None:
+    """When `norad_id` was last fetched successfully, per the previously-published
+    metadata, or None if it never was (or the entry is unreadable)."""
+    entry = previous_metadata.get("satellites", {}).get(str(norad_id))
+    if not isinstance(entry, dict):
+        return None
+    try:
+        return datetime.strptime(entry["fetched_at"], _ISO_FORMAT).replace(tzinfo=UTC)
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def is_stale(
+    previous_metadata: dict[str, Any], norad_id: int, run_time: datetime, max_age: timedelta
+) -> bool:
+    """Whether a satellite that failed this run has no published TLE younger than `max_age`.
+
+    A missed refresh is not worth an alert while the last good file is still fresh (the next
+    scheduled run usually succeeds); a satellite that was never fetched is always stale.
+    """
+    fetched_at = last_fetched_at(previous_metadata, norad_id)
+    return fetched_at is None or run_time - fetched_at > max_age
+
+
 def main(argv: list[str] | None = None) -> int:
-    """Fetch every tracked satellite, publish what succeeded, and return 1 if any failed."""
+    """Fetch every tracked satellite, publish what succeeded, and return 1 only if a failed
+    satellite's published TLE is older than --max-stale-hours (or missing)."""
     parser = argparse.ArgumentParser(
         description=(
             "Fetch current TLEs from Celestrak and publish them as a flat "
@@ -124,6 +149,13 @@ def main(argv: list[str] | None = None) -> int:
         "(default: tle/). Should already contain the tle-data branch's "
         "current contents, if any, so a failed satellite's previous "
         "file/metadata entry can be preserved.",
+    )
+    parser.add_argument(
+        "--max-stale-hours",
+        type=float,
+        default=MIRROR_REFRESH_WARNING_HOURS,
+        help="A failed fetch only fails the run once that satellite's last good TLE is older "
+        "than this (default: %(default)s h, the threshold at which the app warns users).",
     )
     args = parser.parse_args(argv)
 
@@ -145,14 +177,29 @@ def main(argv: list[str] | None = None) -> int:
     write_outputs(args.output_dir, outcomes, previous_metadata, run_time)
 
     failures = [o for o in outcomes if not o.success]
-    if failures:
+    if not failures:
+        print(f"\nAll {len(outcomes)} satellite(s) refreshed successfully.")
+        return 0
+
+    print(
+        f"\n{len(failures)}/{len(outcomes)} satellite(s) failed to refresh this run -- "
+        f"previously-published files for those satellites were preserved and republished as-is."
+    )
+    max_age = timedelta(hours=args.max_stale_hours)
+    stale = {
+        o.norad_id for o in failures if is_stale(previous_metadata, o.norad_id, run_time, max_age)
+    }
+    for outcome in failures:
+        # "::warning::" / "::error::" lines become annotations on the GitHub Actions run.
+        level = "error" if outcome.norad_id in stale else "warning"
+        print(f"::{level}::{outcome.name} (NORAD {outcome.norad_id}): {outcome.error}")
+    if stale:
         print(
-            f"\n{len(failures)}/{len(outcomes)} satellite(s) failed to "
-            f"refresh this run -- previously-published files for those "
-            f"satellites were preserved and republished as-is."
+            f"{len(stale)} satellite(s) have no TLE newer than {args.max_stale_hours:g} h "
+            f"in the mirror -- failing the run."
         )
         return 1
-    print(f"\nAll {len(outcomes)} satellite(s) refreshed successfully.")
+    print(f"Every failed satellite still has a TLE newer than {args.max_stale_hours:g} h.")
     return 0
 
 
