@@ -93,11 +93,8 @@ KOUROU: GeographicPosition = wgs84.latlon(
     KOUROU_LATITUDE_DEG, KOUROU_LONGITUDE_DEG, elevation_m=KOUROU_ELEVATION_M
 )
 
-# Minimum elevation for a satellite to count as visible (the conventional default mask).
+# Minimum elevation for a satellite to count as visible (see docs/DECISIONS.md).
 MIN_PASS_ELEVATION_DEG: float = 10.0
-
-# A pass with fewer samples than this is flagged low-confidence (times resolved to ~1 step).
-MIN_PASS_SAMPLES_FOR_CONFIDENCE: int = 3
 
 # Footer attribution. Must stay constants: app.py renders them as raw HTML.
 AUTHOR_NAME: str = "Aleksander Bruski"

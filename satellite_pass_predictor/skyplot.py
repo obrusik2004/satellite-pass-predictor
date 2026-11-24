@@ -10,10 +10,9 @@ from skyfield.timelib import Timescale
 from skyfield.toposlib import GeographicPosition
 
 from .config import SATELLITE_COLORS, THEME_BACKGROUND_COLOR, THEME_BORDER_COLOR, THEME_TEXT_COLOR
-from .time_utils import build_time_grid
 from .visibility import PassDict, compute_altaz
 
-# Passes are detected on a 1-minute grid; re-sampling the short window finely keeps the arc smooth.
+# Maximum spacing between plotted samples; small enough for a smooth arc.
 SKY_PLOT_STEP_SECONDS: float = 5.0
 
 # Neutral marker colors so they can't be mistaken for a satellite's track color; rise and
@@ -30,19 +29,16 @@ def build_sky_plot_figure(
     satellite_name: str,
     step_seconds: float = SKY_PLOT_STEP_SECONDS,
 ) -> go.Figure:
-    """Plot `pass_` as a polar elevation/azimuth track, re-sampled every `step_seconds`.
+    """Plot `pass_` as a polar elevation/azimuth track, sampled at most `step_seconds` apart.
 
     Zenith is at the center and the horizon at the edge; azimuth runs clockwise from north at
-    the top. AOS/LOS mark the first and last sample above the elevation mask. The track color
-    comes from `satellite_name` (not `sat.name`, whose naming is Celestrak's).
+    the top. Samples run from the pass's exact start to its exact end, so AOS/LOS sit on the
+    elevation mask (or on the window edge for a truncated pass). The track color comes from
+    `satellite_name` (not `sat.name`, whose naming is Celestrak's).
     """
-    duration_hours = (pass_["end_time"].tt - pass_["start_time"].tt) * 24.0
-    t = build_time_grid(
-        ts,
-        start_time=pass_["start_time"],
-        duration_hours=duration_hours,
-        step_minutes=step_seconds / 60.0,
-    )
+    start_jd, end_jd = pass_["start_time"].tt, pass_["end_time"].tt
+    n_samples = max(2, int(np.ceil((end_jd - start_jd) * 86400.0 / step_seconds)) + 1)
+    t = ts.tt_jd(np.linspace(start_jd, end_jd, n_samples))
     altaz = compute_altaz(sat, observer, t)
     # The grid is always an array, so the scalar half of the union never applies here.
     elevation_deg = cast(NDArray[np.float64], altaz["elevation_deg"])

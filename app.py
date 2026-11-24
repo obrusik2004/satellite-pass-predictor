@@ -52,6 +52,8 @@ from satellite_pass_predictor.visualization import (
     PASS_TABLE_COLUMNS,
     build_pass_note_codes,
     build_pass_rows,
+    find_pass_row,
+    pass_key,
 )
 
 st.set_page_config(page_title="Satellite Pass Predictor", layout="wide")
@@ -165,6 +167,23 @@ def _render_globe(
         )
     with st.container(key=f"globe_{st.session_state[GLOBE_VIEW_COUNTER_KEY]}"):
         st.pydeck_chart(build_globe_deck(ground_tracks), height=600)
+
+
+# The table's selection is kept as a pass identity, not a row position: positions shift when a
+# rerun adds or drops a pass. The keys of the rows last shown map a clicked position to a pass.
+PASSES_TABLE_KEY = "passes_table"
+SELECTED_PASS_KEY = "selected_pass"
+SHOWN_PASS_KEYS_KEY = "shown_pass_keys"
+
+
+def _on_pass_selection_change() -> None:
+    selected_rows = st.session_state[PASSES_TABLE_KEY].selection.rows
+    shown_keys = st.session_state.get(SHOWN_PASS_KEYS_KEY, [])
+    st.session_state[SELECTED_PASS_KEY] = (
+        shown_keys[selected_rows[0]]
+        if selected_rows and selected_rows[0] < len(shown_keys)
+        else None
+    )
 
 
 # cache_resource, not cache_data: EarthSatellite wraps an sgp4 Satrec, which can't be pickled.
@@ -341,16 +360,27 @@ else:
         lambda satellite_name: f"color: {SATELLITE_COLORS[satellite_name]}; font-weight: 600",
         subset=["Satellite"],
     )
-    # The explicit key keeps the widget identity (and so the row selection) stable across
-    # reruns, whose recomputed data would otherwise give it a new identity. Selected row
-    # positions index into `rows` even after the user re-sorts the table.
-    event = st.dataframe(
+    # Point the table's selection at the selected pass's current row, or clear it if that pass
+    # has left the window.
+    selected_key = st.session_state.get(SELECTED_PASS_KEY)
+    selected_idx = None if selected_key is None else find_pass_row(rows, selected_key)
+    st.session_state[SELECTED_PASS_KEY] = (
+        None if selected_idx is None else pass_key(rows[selected_idx])
+    )
+    st.session_state[PASSES_TABLE_KEY] = {
+        "selection": {"rows": [] if selected_idx is None else [selected_idx]}
+    }
+    st.session_state[SHOWN_PASS_KEYS_KEY] = [pass_key(row) for row in rows]
+    # The explicit key keeps the widget identity stable across reruns, whose recomputed data
+    # would otherwise give it a new identity. Selected positions index into `rows` even after
+    # the user re-sorts the table.
+    st.dataframe(
         styled_rows,
         width="stretch",
         hide_index=True,
-        on_select="rerun",
+        on_select=_on_pass_selection_change,
         selection_mode="single-row",
-        key="passes_table",
+        key=PASSES_TABLE_KEY,
         column_config={
             "Notes": st.column_config.TextColumn(
                 width="small",
@@ -366,11 +396,10 @@ else:
         )
 
     st.subheader("Sky Track")
-    selected = event.selection.rows
-    if not selected:
+    if selected_idx is None:
         st.info("Select a pass above to see its sky track.")
     else:
-        selected_row = rows[selected[0]]
+        selected_row = rows[selected_idx]
         satellite_name = cast(str, selected_row["_satellite"])
         pass_ = cast(PassDict, selected_row["_pass"])
         fig = build_sky_plot_figure(satellites[satellite_name], pass_, KOUROU, ts, satellite_name)

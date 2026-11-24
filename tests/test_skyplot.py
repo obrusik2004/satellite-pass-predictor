@@ -1,32 +1,34 @@
 """Tests for satellite_pass_predictor.skyplot.
 
-Uses the frozen ISS TLE and the real Kourou observer. Figure data is compared against an
-independently recomputed look-angle array.
+Uses the frozen ISS TLE and the real Kourou observer. Figure data is compared against look
+angles recomputed at the pass's own AOS and LOS.
 """
 
 import numpy as np
 import pytest
 from skyfield.timelib import Timescale
 
-from satellite_pass_predictor.config import KOUROU, SATELLITE_COLORS
+from satellite_pass_predictor.config import KOUROU, MIN_PASS_ELEVATION_DEG, SATELLITE_COLORS
 from satellite_pass_predictor.skyplot import SKY_PLOT_STEP_SECONDS, build_sky_plot_figure
-from satellite_pass_predictor.time_utils import build_time_grid
 from satellite_pass_predictor.visibility import PassDict, compute_altaz, compute_passes
 
 _ISS_NAME = "ISS (ZARYA)"
 
 
 def _a_real_pass_with_some_duration(ts: Timescale, iss_satellite) -> PassDict:
-    """A detected pass with more than one sample, so the arc isn't a single-point graze."""
+    """A complete pass longer than a minute, so the arc isn't a single-point graze."""
     passes = compute_passes(
         iss_satellite,
         KOUROU,
         ts,
         start_time=ts.utc(2026, 9, 21, 0, 0, 0),
         duration_hours=24 * 7,
-        step_minutes=1,
     )
-    return next(p for p in passes if p["duration_minutes"] > 1.0)
+    return next(
+        p
+        for p in passes
+        if p["duration_minutes"] > 1.0 and not (p["start_truncated"] or p["end_truncated"])
+    )
 
 
 def _line_trace(fig):
@@ -55,21 +57,11 @@ def test_radius_is_90_minus_elevation_and_zenith_maps_to_plot_center(
 
     fig = build_sky_plot_figure(iss_satellite, pass_, KOUROU, ts, _ISS_NAME)
 
-    duration_hours = (pass_["end_time"].tt - pass_["start_time"].tt) * 24.0
-    t = build_time_grid(
-        ts,
-        start_time=pass_["start_time"],
-        duration_hours=duration_hours,
-        step_minutes=SKY_PLOT_STEP_SECONDS / 60.0,
-    )
-    altaz = compute_altaz(iss_satellite, KOUROU, t)
-    expected_radius = 90.0 - altaz["elevation_deg"]
-
     line = _line_trace(fig)
-    assert np.allclose(line.r, expected_radius)
-    assert np.allclose(line.theta, altaz["azimuth_deg"])
-    highest_elevation_idx = int(np.argmax(altaz["elevation_deg"]))
-    assert int(np.argmin(line.r)) == highest_elevation_idx
+    elevation = np.asarray(line.customdata)
+    assert np.allclose(line.r, 90.0 - elevation)
+    assert int(np.argmin(line.r)) == int(np.argmax(elevation))
+    assert elevation.max() == pytest.approx(pass_["max_elevation_deg"], abs=0.1)
 
 
 def test_radial_axis_spans_horizon_to_zenith_with_inverted_labels(
@@ -119,12 +111,27 @@ def test_rise_and_set_markers_present_distinct_and_at_pass_endpoints(
     assert set_.theta[0] == pytest.approx(pass_["end_azimuth_deg"])
 
 
-def test_recomputes_at_finer_resolution_than_the_tables_one_minute_grid(
-    ts: Timescale, iss_satellite
-) -> None:
+def test_track_runs_from_exact_aos_to_exact_los_on_the_mask(ts: Timescale, iss_satellite) -> None:
+    """The first and last samples are AOS and LOS themselves, so both markers sit on the mask."""
     pass_ = _a_real_pass_with_some_duration(ts, iss_satellite)
-    coarse_sample_count = int(pass_["duration_minutes"]) + 1  # what a 1-min grid would give
 
     fig = build_sky_plot_figure(iss_satellite, pass_, KOUROU, ts, _ISS_NAME)
 
-    assert len(_line_trace(fig).r) > coarse_sample_count
+    line = _line_trace(fig)
+    edges = compute_altaz(
+        iss_satellite, KOUROU, ts.tt_jd([pass_["start_time"].tt, pass_["end_time"].tt])
+    )
+    assert np.array_equal([line.theta[0], line.theta[-1]], edges["azimuth_deg"])
+    assert np.array_equal([line.customdata[0], line.customdata[-1]], edges["elevation_deg"])
+    for marker in _marker_traces(fig):
+        assert marker.customdata[0] >= MIN_PASS_ELEVATION_DEG
+        assert marker.customdata[0] == pytest.approx(MIN_PASS_ELEVATION_DEG, abs=1e-3)
+
+
+def test_samples_are_no_further_apart_than_the_step(ts: Timescale, iss_satellite) -> None:
+    pass_ = _a_real_pass_with_some_duration(ts, iss_satellite)
+
+    fig = build_sky_plot_figure(iss_satellite, pass_, KOUROU, ts, _ISS_NAME)
+
+    sample_count = len(_line_trace(fig).r)
+    assert (sample_count - 1) * SKY_PLOT_STEP_SECONDS >= pass_["duration_minutes"] * 60

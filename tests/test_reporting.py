@@ -25,7 +25,6 @@ def _fake_pass(t: Time) -> PassDict:
         "max_elevation_time": t,
         "max_elevation_truncated": False,
         "duration_minutes": 8.0,
-        "low_confidence": False,
     }
 
 

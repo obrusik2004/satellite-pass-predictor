@@ -1,4 +1,4 @@
-"""Time-grid helper shared by propagation and visibility."""
+"""Time-grid helper for sampled propagation (ground tracks)."""
 
 import numpy as np
 from skyfield.timelib import Time, Timescale

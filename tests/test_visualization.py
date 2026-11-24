@@ -19,6 +19,9 @@ from satellite_pass_predictor.visualization import (
     _split_at_antimeridian,
     build_ground_tracks_figure,
     build_pass_note_codes,
+    build_pass_rows,
+    find_pass_row,
+    pass_key,
     plot_ground_tracks,
     print_passes_table,
 )
@@ -92,9 +95,8 @@ def _fake_pass(
     start_truncated: bool = False,
     end_truncated: bool = False,
     max_elevation_truncated: bool = False,
-    low_confidence: bool = False,
 ) -> PassDict:
-    """A PassDict with only the four note flags varied and placeholder values elsewhere."""
+    """A PassDict with only the three note flags varied and placeholder values elsewhere."""
     t = ts.utc(2026, 1, 1, 0, 0, 0)
     return {
         "start_time": t,
@@ -107,7 +109,6 @@ def _fake_pass(
         "max_elevation_time": t,
         "max_elevation_truncated": max_elevation_truncated,
         "duration_minutes": 0.0,
-        "low_confidence": low_confidence,
     }
 
 
@@ -119,13 +120,12 @@ def test_build_pass_note_codes_each_flag_maps_to_its_own_code(ts: Timescale) -> 
     assert build_pass_note_codes(_fake_pass(ts, start_truncated=True)) == "IP"
     assert build_pass_note_codes(_fake_pass(ts, end_truncated=True)) == "CE"
     assert build_pass_note_codes(_fake_pass(ts, max_elevation_truncated=True)) == "MH"
-    assert build_pass_note_codes(_fake_pass(ts, low_confidence=True)) == "LC"
 
 
 def test_build_pass_note_codes_joins_multiple_flags_in_a_fixed_order(ts: Timescale) -> None:
-    pass_ = _fake_pass(ts, low_confidence=True, start_truncated=True, end_truncated=True)
+    pass_ = _fake_pass(ts, max_elevation_truncated=True, start_truncated=True, end_truncated=True)
 
-    assert build_pass_note_codes(pass_) == "IP, CE, LC"
+    assert build_pass_note_codes(pass_) == "IP, CE, MH"
 
 
 def test_note_code_legend_covers_every_code_build_pass_note_codes_can_emit(
@@ -137,12 +137,52 @@ def test_note_code_legend_covers_every_code_build_pass_note_codes_can_emit(
         start_truncated=True,
         end_truncated=True,
         max_elevation_truncated=True,
-        low_confidence=True,
     )
     emitted_codes = set(build_pass_note_codes(all_flags_pass).split(", "))
     legend_codes = {code for code, _ in NOTE_CODE_LEGEND}
 
     assert emitted_codes == legend_codes
+
+
+def _timed_pass(ts: Timescale, start_minute: float, end_minute: float) -> PassDict:
+    """A PassDict starting/ending this many minutes after 2026-01-01 00:00 UTC."""
+    pass_ = _fake_pass(ts)
+    pass_["start_time"] = ts.utc(2026, 1, 1, 0, start_minute)
+    pass_["end_time"] = ts.utc(2026, 1, 1, 0, end_minute)
+    return pass_
+
+
+def test_find_pass_row_follows_a_pass_when_an_earlier_one_leaves_the_table(
+    ts: Timescale,
+) -> None:
+    """The selected pass is found at its new position, not whatever moved into its old one."""
+    before = build_pass_rows({"ISS (ZARYA)": [_timed_pass(ts, 0, 10), _timed_pass(ts, 90, 100)]})
+    key = pass_key(before[1])
+
+    after = build_pass_rows({"ISS (ZARYA)": [_timed_pass(ts, 90, 100)]})
+
+    assert find_pass_row(after, key) == 0
+
+
+def test_find_pass_row_matches_an_in_progress_pass_whose_start_moved(ts: Timescale) -> None:
+    """A start clamped to the window edge moves with "now"; the pass still matches."""
+    key = pass_key(build_pass_rows({"ISS (ZARYA)": [_timed_pass(ts, 0, 10)]})[0])
+
+    rows = build_pass_rows({"ISS (ZARYA)": [_timed_pass(ts, 3, 10)]})
+
+    assert find_pass_row(rows, key) == 0
+
+
+def test_find_pass_row_is_none_once_the_pass_is_gone_or_for_another_satellite(
+    ts: Timescale,
+) -> None:
+    key = pass_key(build_pass_rows({"ISS (ZARYA)": [_timed_pass(ts, 0, 10)]})[0])
+
+    later_pass_only = build_pass_rows({"ISS (ZARYA)": [_timed_pass(ts, 90, 100)]})
+    other_satellite = build_pass_rows({"MICROSCOPE": [_timed_pass(ts, 0, 10)]})
+
+    assert find_pass_row(later_pass_only, key) is None
+    assert find_pass_row(other_satellite, key) is None
 
 
 def test_plot_ground_tracks_creates_output_directory_if_missing(

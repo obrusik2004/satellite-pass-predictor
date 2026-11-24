@@ -169,9 +169,7 @@ def build_pass_rows(
             if p["end_truncated"]:
                 notes.append("CUT OFF AT END")
             if p["max_elevation_truncated"]:
-                notes.append("MAX MAY BE HIGHER (still rising at cutoff)")
-            if p["low_confidence"]:
-                notes.append("LOW CONFIDENCE (rerun with finer step)")
+                notes.append("MAX MAY BE HIGHER (peak outside window)")
 
             rows.append(
                 {
@@ -194,13 +192,36 @@ def build_pass_rows(
     return rows
 
 
+# Identifies a pass across reruns: satellite name, then AOS and LOS as TT Julian dates.
+PassKey = tuple[str, float, float]
+
+
+def pass_key(row: dict[str, str | Time | PassDict]) -> PassKey:
+    """Return the PassKey of a build_pass_rows() row."""
+    pass_ = cast(PassDict, row["_pass"])
+    return (cast(str, row["_satellite"]), pass_["start_time"].tt, pass_["end_time"].tt)
+
+
+def find_pass_row(rows: list[dict[str, str | Time | PassDict]], key: PassKey) -> int | None:
+    """Return the index of the row showing the pass `key` identifies, or None if it is gone.
+
+    Matches the same satellite with an overlapping AOS-LOS interval rather than an exact AOS:
+    one satellite's passes never overlap, and a start clamped to the window edge moves with it.
+    """
+    satellite, start_jd, end_jd = key
+    for i, row in enumerate(rows):
+        row_satellite, row_start_jd, row_end_jd = pass_key(row)
+        if row_satellite == satellite and row_start_jd <= end_jd and start_jd <= row_end_jd:
+            return i
+    return None
+
+
 # (code, meaning) for each flag build_pass_note_codes() can emit, in its check order.
 # Kept in sync with that function by tests.
 NOTE_CODE_LEGEND: list[tuple[str, str]] = [
     ("IP", "in progress at start of window -- true rise time unknown"),
     ("CE", "cut off at end of window -- true set time unknown"),
-    ("MH", "max elevation may be higher -- was still rising when the window ended"),
-    ("LC", "low confidence -- too few samples; rerun with a finer step"),
+    ("MH", "max elevation may be higher -- the peak is outside the window"),
 ]
 
 
@@ -216,8 +237,6 @@ def build_pass_note_codes(pass_: PassDict) -> str:
         codes.append("CE")
     if pass_["max_elevation_truncated"]:
         codes.append("MH")
-    if pass_["low_confidence"]:
-        codes.append("LC")
     return ", ".join(codes)
 
 

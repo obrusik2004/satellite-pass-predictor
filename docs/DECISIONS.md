@@ -55,3 +55,15 @@ Short records of the choices that shape the code: context, decision, consequence
 **Context.** A 200 response with an error body used to overwrite a good cache and then count as fresh, and one bad satellite aborted the whole load.
 **Decision.** A response is parsed and checked (one TLE, matching NORAD ID) before an atomic write, a failed refresh falls back to the cache, and `load_satellites` returns the loaded satellites plus a per-satellite failure report. A TLE older than `TLE_EPOCH_MAX_DAYS` or one SGP4 cannot propagate is a failure, not a silent empty result.
 **Consequence.** One satellite's problem shows as a warning naming the satellite and the source while the rest still render, and a poisoned cache heals itself. Only transient errors (connection, timeout, 5xx, 429) are retried.
+
+## 10. Pass events by root-finding, not a fixed time grid
+
+**Context.** Passes were found by sampling elevation every minute from "now", so AOS came out up to a minute late, LOS up to a minute early and the peak up to several degrees low, and the times shifted with every rerun because the grid moved with "now".
+**Decision.** Skyfield's `find_events` brackets each rise, culmination and set (to about 0.5 s); each event is then bisected onto a fixed grid of absolute 1 ms ticks. AOS is the first tick at or above the mask, LOS the last, the peak the highest tick; a pass cut by the window edge is clamped to it and flagged.
+**Consequence.** Over a 7-day ISS fixture, AOS/LOS errors fell from up to 53/59 s to under 1 ms, max elevation from up to 6 degrees low to exact, and mean duration error from 57 s to 1 ms. Times are bit-identical across reruns, the sky plot's AOS/LOS sit on the mask, the "low confidence" flag is gone, and 4 satellites x 72 h compute in about 0.25 s instead of 0.86 s.
+
+## 11. A 10 degree elevation mask
+
+**Context.** Below about 10 degrees, terrain, buildings and vegetation block the horizon, the signal crosses the most atmosphere (refraction, attenuation, multipath), and the slant range is longest.
+**Decision.** `MIN_PASS_ELEVATION_DEG` is 10 degrees, the common default for LEO pass prediction and amateur-station planning.
+**Consequence.** Listed passes are ones a typical station could actually use; very low grazing passes are left out. Elevations are geometric (no refraction model), which at 10 degrees is off by only about 0.1 degree. It is one constant, so a station with a clear horizon (5 degrees) or a stricter link budget (15-20 degrees) can change it.
